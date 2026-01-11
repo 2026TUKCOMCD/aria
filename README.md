@@ -12,7 +12,8 @@
 ---
 
 ## 2. 시스템 구조도 (System Architecture)
-<img width="1117" height="546" alt="image" src="https://github.com/user-attachments/assets/20f48a0b-42f5-4d37-87dd-82b76af428b1" />
+<img width="1141" height="592" alt="image" src="https://github.com/user-attachments/assets/6a8448ac-9c19-4d13-abdb-b5f5db7b0e16" />
+
 
 
 ---
@@ -22,7 +23,7 @@
 
 | 구분 | 상세 내용 |
 | :--- | :--- |
-| **OS** | Ubuntu 24.04 LTS |
+| **OS** | Ubuntu 22.04 LTS |
 | **Middleware** | ROS 2 Humble Hawksbill |
 | **Language** | Python 3.10, C++ (Arduino IDE) |
 | **Cloud/DB** | AWS IoT Core, Lambda, PostgreSQL (TimescaleDB) |
