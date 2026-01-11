@@ -31,7 +31,19 @@
 
 ---
 
-## 4. 운영 환경 (Operating Environment)
+## 4. 운영 환경 (Development Environment)
+
+
+| 구분 | 상세 내용 |
+| :--- | :--- |
+| **Web** | Runs on Docker container on AWS EC2 |
+| **Cloud** | S3, PostgreSQL, AI SageMaker, AWS IoT Core, Lambda |
+| **Raspberry Pi 4B** | Programs using SLAM Toolbox and Nav2 run on ROS 2 middleware |
+| **ESP32** | Code developed with Arduino runs on firmware |
+
+---
+
+## 5. 운영 시나리오 (Operating Scenario)
 <img width="925" height="537" alt="image" src="https://github.com/user-attachments/assets/8553823b-e6ee-447c-851a-e122a8399d66" />
 
 <img width="942" height="542" alt="image" src="https://github.com/user-attachments/assets/ddeb83ee-3d1a-4558-969e-d06f70800447" />
@@ -40,6 +52,6 @@
 
 ---
 
-## 5. 데모 환경 (Demo Environment)
+## 6. 데모 환경 (Demo Environment)
 
 <img width="1118" height="457" alt="image" src="https://github.com/user-attachments/assets/ce715225-c9af-4bc0-ae4d-1b23c71ad247" />
