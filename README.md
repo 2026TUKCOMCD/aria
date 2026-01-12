@@ -25,7 +25,7 @@
 | :--- | :--- |
 | **OS** | Ubuntu 22.04 LTS |
 | **Middleware** | ROS 2 Humble Hawksbill |
-| **Language** | Python 3.10, C++ (Arduino IDE) |
+| **Language** | Python 3.10, C++ (Arduino IDE), JavaScript |
 | **Cloud/DB** | AWS IoT Core, Lambda, PostgreSQL (TimescaleDB) |
 | **AI/CV** | YOLOv8, PyTorch |
 
