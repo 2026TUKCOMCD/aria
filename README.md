@@ -54,7 +54,7 @@
 
 ## 6. 데모 환경 (Demo Environment)
 
-<img width="1118" height="457" alt="image" src="https://github.com/user-attachments/assets/ce715225-c9af-4bc0-ae4d-1b23c71ad247" />
+<img width="1218" height="557" alt="image" src="https://github.com/user-attachments/assets/ce715225-c9af-4bc0-ae4d-1b23c71ad247" />
 
 ---
 
