@@ -29,6 +29,7 @@
 | **Cloud/DB** | AWS IoT Core, Lambda, PostgreSQL (TimescaleDB) |
 | **AI/CV** | YOLOv8, PyTorch |
 
+
 ---
 
 ## 4. 운영 환경 (Operating Environment)
