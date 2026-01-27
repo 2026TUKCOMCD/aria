@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL: 데이터 저장소
+  db:
+    image: postgres:15
+    container_name: aria-db
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: always
+
+  # 2. Mosquitto: MQTT 메시지 브로커
+  mqtt-broker:
+    image: eclipse-mosquitto:2.0
+    container_name: aria-mqtt
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+    restart: always
+
+  # 3. Subscriber (server): MQTT 데이터를 DB에 기록
+  mqtt-subscriber:
+    build: ./server
+    env_file: .env  # .env 파일의 내용을 컨테이너 환경 변수로 주입
+    container_name: aria-subscriber
+    depends_on:
+      - db
+      - mqtt-broker
+    environment:
+      - DB_HOST=db
+      - DB_NAME=${DB_NAME}
+      - DB_USER=user
+      - DB_PASS=${DB_PASSWORD}
+      - MQTT_BROKER=mqtt-broker
+    restart: always
+
+  # 4. Event AI (ai/event_ai): 실시간 분석 및 GPU 활용
+  event-ai:
+    build: ./ai/event_ai
+    container_name: aria-event-ai
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu] # GTX 1650 할당
+    volumes:
+      - ./ai/event_ai:/workspace
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    depends_on:
+      - db
+    restart: always
