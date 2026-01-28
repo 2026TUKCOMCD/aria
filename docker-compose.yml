@@ -45,6 +45,7 @@ services:
   event-ai:
     build: ./ai/event_ai
     container_name: aria-event-ai
+    env_file: .env
     deploy:
       resources:
         reservations:
