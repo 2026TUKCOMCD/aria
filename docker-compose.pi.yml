@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # 1. PostgreSQL: 센서 데이터 및 세션 정보 저장
+  # 1. DB와 MQTT는 그대로 유지 (ARM64 이미지를 자동으로 가져옵니다)
   db:
     image: postgres:15
     container_name: aria-db
@@ -12,10 +12,9 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql # 초기 스캔 스키마 생성
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     restart: always
 
-  # 2. Mosquitto: MQTT 메시지 브로커
   mqtt-broker:
     image: eclipse-mosquitto:2.0
     container_name: aria-mqtt
@@ -25,7 +24,6 @@ services:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
     restart: always
 
-  # 3. Subscriber: MQTT 데이터를 DB에 기록
   mqtt-subscriber:
     build: ./server
     container_name: aria-subscriber
@@ -40,20 +38,12 @@ services:
       - MQTT_BROKER=mqtt-broker
     restart: always
 
-  # 4. Event AI: 학습 및 GPU 가속 추론 테스트
   event-ai:
-    build:
+    build: 
       context: ./ai/event_ai
-      dockerfile: Dockerfile` # 기본 GPU용 Dockerfile 사용
+      dockerfile: Dockerfile.pi
     container_name: aria-event-ai
     env_file: .env
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu] # GTX 1650 할당
     volumes:
       - ./ai/event_ai:/workspace
     working_dir: /workspace

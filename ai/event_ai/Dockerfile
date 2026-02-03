@@ -1,9 +1,15 @@
-FROM pytorch/pytorch:2.0.1-cuda11.7-cudnn8-devel
+FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
+# 2. 필수 라이브러리 설치 (기존 방식 유지 및 확장)
 
-# 필요한 추가 라이브러리가 있다면 여기에 작성 (예: pandas, scikit-learn 등)
-RUN pip install --no-cache-dir pandas scikit-learn psycopg2-binary
-
+# psycopg2-binary, numpy, pandas, scikit-learn 포함
+RUN pip install --no-cache-dir pandas scikit-learn psycopg2-binary numpy
 WORKDIR /workspace
 
-# 컨테이너 실행 시 main.py 대기 (나중에 실제 모델 코드로 대체)
-CMD ["python", "main.py"]
+# 3. 소스 코드 복사
+COPY . .
+
+# 4. 환경 검증을 위해 첫 실행 시 check_env.py를 실행
+# 나중에 실전용으로 바꿀 때 CMD ["python", "inference.py"]로 수정
+CMD ["python", "check_env.py"]
+CMD ["tail", "-f", "/dev/null"]
+
