@@ -28,7 +28,7 @@ def init_edge_engine():
     try:
         # 모델 로드
         model = AdvancedCookingDetector()
-        model.load_state_dict(torch.load("advanced_cooking_model.pt", map_location=device))
+        model.load_state_dict(torch.load("event_model.pt", map_location=device, weights_only=True))
         model.eval()
         
         # 스케일러 로드
