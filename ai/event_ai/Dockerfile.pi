@@ -1,22 +1,33 @@
-# ai/event_ai/Dockerfile.pi
-
-# 1. 라즈베리 파이(ARM64)용 경량 파이썬
+# 1. 라즈베리 파이(ARM64)용 경량 파이썬 이미지
 FROM python:3.10-slim
 
-# 2. 시스템 필수 라이브러리 (psycopg2 등을 위한 빌드 도구)
+# 2. 시스템 필수 라이브러리 설치
+# psycopg2-binary 빌드 및 시리얼 통신 환경을 위해 gcc 등이 필요할 수 있음
 RUN apt-get update && apt-get install -y \
     libpq-dev \
     gcc \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
 
-# 3. CPU 전용 PyTorch 및 라이브러리 설치
-# --index-url을 통해 CPU 전용 버전을 받으면 파이에서 훨씬 가볍습니다.
-RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
-RUN pip install --no-cache-dir pandas scikit-learn psycopg2-binary numpy requests joblib
+# 3. 의존성 라이브러리 설치 (레이어 캐싱을 위해 복사 전 수행)
+# 라즈베리 파이(ARM64)에서는 일반 pip install torch가 더 잘 작동할 수 있음
+# 만약 설치가 안 된다면 --index-url 옵션을 사용하세요.
+RUN pip install --no-cache-dir \
+    numpy==1.26.4 \
+    pandas==2.3.3 \
+    scikit-learn==1.7.2 \
+    joblib==1.5.3 \
+    requests==2.32.5 \
+    pyserial==3.5 \
+    psycopg2-binary
 
+# CPU 전용 PyTorch 설치 (라즈베리 파이 최적화)
+RUN pip install --no-cache-dir torch==2.0.1 torchvision==0.15.2 --index-url https://download.pytorch.org/whl/cpu
+
+# 4. 소스 코드 전체 복사
 COPY . .
 
-# 추론 엔진 실행
-CMD ["python", "inference.py"]
+# 5. 실행 명령 변경
+CMD ["python", "main.py"]
