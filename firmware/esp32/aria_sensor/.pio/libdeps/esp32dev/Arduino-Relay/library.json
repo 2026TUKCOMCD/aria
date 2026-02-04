@@ -1,0 +1,18 @@
+{
+	"name": "Arduino-Relay",
+	"version": "1.0",
+	"keywords": "relay, switch",
+	"description": "A class that abstracts the control of a relay (or any switchable device) connected to a microcontroller pin. It can persist the state of all objects instantiated in the EEPROM permanent memory. It takes just one bit per object.",
+	"authors": {
+		"name": "Sávio Carlos Martins Costa",
+		"email": "saviocmc@ufmg.br",
+		"url": "https://github.com/saviocmc",
+		"maintainer": true
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/saviocmc/Arduino-Relay.git"
+	},
+	"frameworks": "arduino",
+	"platforms": "*"
+}
