@@ -3,3 +3,9 @@ venv/
 __pycache__/
 *.pyc
 aria_synthetic_data.json
+
+certs/
+*.pem.crt
+*.pem.key
+*.json
+AmazonRootCA1.pem
