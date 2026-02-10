@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+*.pt
+*.jpg
+*.png
+*.mp4
+*.avi
+test_images/
+requirements_old.txt
+requirements_full.txt
+*_base64.txt
+.DS_Store
