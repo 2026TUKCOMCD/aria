@@ -1,0 +1,11 @@
+services:
+  aria-ai-test:
+    build: .
+    container_name: aria_ai_standalone
+    devices:
+      - "/dev/serial0:/dev/serial0"
+      - "/dev/video0:/dev/video0"
+    environment:
+      - PYTHONPATH=/app
+    stdin_open: true
+    tty: true

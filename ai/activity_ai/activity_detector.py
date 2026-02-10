@@ -1,5 +1,5 @@
-from person_detector import PersonDetector
-from pose_classifier import PoseClassifier
+from activity_ai.person_detector import PersonDetector
+from activity_ai.pose_classifier import PoseClassifier
 
 class ActivityDetector:
     """

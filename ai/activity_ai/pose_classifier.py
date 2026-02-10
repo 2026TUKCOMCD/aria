@@ -1,4 +1,4 @@
-from person_detector import PersonDetector, KEYPOINT_NAMES
+from activity_ai.person_detector import PersonDetector, KEYPOINT_NAMES
 import numpy as np
 
 class PoseClassifier:

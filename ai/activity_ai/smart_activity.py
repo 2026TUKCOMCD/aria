@@ -1,5 +1,5 @@
-from activity_detector import ActivityDetector
-from result_filter import ResultFilter
+from activity_ai.activity_detector import ActivityDetector
+from activity_ai.result_filter import ResultFilter
 import cv2
 
 class SmartActivityDetector:
