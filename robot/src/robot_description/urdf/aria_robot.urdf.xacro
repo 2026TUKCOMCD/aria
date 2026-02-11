@@ -1,0 +1,98 @@
+<?xml version="1.0"?>
+<robot name="aria_robot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ====== Params (meters) ====== -->
+  <xacro:property name="wheel_radius" value="0.045"/>
+  <xacro:property name="wheel_width"  value="0.03"/>   <!-- 임시(나중에 실측) -->
+  <xacro:property name="wheel_sep"    value="0.23"/>
+  <xacro:property name="wheel_y"      value="${wheel_sep/2.0}"/>
+
+  <!-- 바닥 기준 LiDAR 위치 -->
+  <xacro:property name="lidar_x_from_center" value="0.005"/>
+  <xacro:property name="lidar_y_from_center" value="0.0"/>
+  <xacro:property name="lidar_z_from_floor"  value="0.44"/>
+
+  <!-- base_link는 바퀴 축 높이 -->
+  <xacro:property name="base_link_z_from_floor" value="${wheel_radius}"/>
+  <!-- base_link 기준 LiDAR z -->
+  <xacro:property name="lidar_z_from_base_link" value="${lidar_z_from_floor - base_link_z_from_floor}"/>
+
+  <!-- 차체 외형(대략). 캐스터 x로 보면 길이 0.21m 정도 -->
+  <xacro:property name="base_length" value="0.21"/>
+  <xacro:property name="base_width"  value="0.23"/>
+  <xacro:property name="base_height" value="0.10"/>  <!-- 임시(나중에 실측) -->
+
+  <!-- ====== Links ====== -->
+  <!-- 바닥 기준 프레임 -->
+  <link name="base_footprint"/>
+
+  <!-- 축 높이 기준 프레임 -->
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 ${base_height/2.0}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${base_length} ${base_width} ${base_height}"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <!-- base_footprint -> base_link (z=wheel_radius) -->
+  <joint name="base_footprint_to_base_link" type="fixed">
+    <parent link="base_footprint"/>
+    <child  link="base_link"/>
+    <origin xyz="0 0 ${base_link_z_from_floor}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Wheels -->
+  <link name="left_wheel_link">
+    <visual>
+      <!-- 휠 축이 y방향이 되도록 회전(기본 실린더 축은 z) -->
+      <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="right_wheel_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <joint name="left_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child  link="left_wheel_link"/>
+    <origin xyz="0 ${wheel_y} 0" rpy="0 0 0"/>
+    <!-- 바퀴 회전축: y축 -->
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <joint name="right_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child  link="right_wheel_link"/>
+    <origin xyz="0 -${wheel_y} 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <!-- LiDAR -->
+  <link name="laser_frame">
+    <visual>
+      <!-- 라이다 높이 6cm는 "외형"으로만 -->
+      <origin xyz="0 0 0.03" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.035" length="0.06"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <joint name="laser_joint" type="fixed">
+    <parent link="base_link"/>
+    <child  link="laser_frame"/>
+    <origin xyz="${lidar_x_from_center} ${lidar_y_from_center} ${lidar_z_from_base_link}" rpy="0 0 0"/>
+  </joint>
+
+</robot>
