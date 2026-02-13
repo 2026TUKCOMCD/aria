@@ -9,3 +9,4 @@ certs/
 *.pem.key
 *.json
 AmazonRootCA1.pem
+robot/src/external/rf2o_laser_odometry/
