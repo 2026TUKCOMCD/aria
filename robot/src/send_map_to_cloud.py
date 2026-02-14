@@ -1,11 +1,16 @@
 import base64
 import requests # 터미널에서 pip install requests 필요
+import os
+from dotenv import load_dotenv
 
-# 1. 내 컴퓨터에 있는 진짜 사진 파일 이름
+# .env 파일에 있는 비밀 변수들 불러오기
+load_dotenv()
+
+# 1. 추후에 생성되는 맵 파일 경로를 집어넣으면 전체 코드 원하는대로 동작 (다른 부분은 손댈 부분 없음)
 IMAGE_FILE_PATH = "test_map.png" 
 
 # 2. API Gateway 주소 입력
-API_URL = "https://ph7ckbtbl3.execute-api.ap-northeast-2.amazonaws.com/robots/robot_test_02/map"
+API_URL = os.environ.get("ARIA_API_URL")
 
 def upload_map():
     try:
