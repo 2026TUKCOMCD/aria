@@ -10,3 +10,7 @@ certs/
 *.json
 AmazonRootCA1.pem
 robot/src/external/rf2o_laser_odometry/
+
+#Mac OS
+.DS_Store
+**/.DS-Store
