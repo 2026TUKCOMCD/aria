@@ -75,3 +75,27 @@ ON robot_status_log (robot_id, time DESC);
 
 -- 웹앱 모니터링 데이터는 영원히 가지고 있을 필요가 없으므로, 1주일(7 days) 지난 데이터는 자동 삭제하여 용량을 관리
 SELECT add_retention_policy('robot_status_log', INTERVAL '7 days');
+
+-- =========================================================
+-- [PART 4] 맵 데이터 저장 (S3 연동) - 이슈 #131
+-- =========================================================
+
+CREATE TABLE IF NOT EXISTS robot_maps (
+    map_id          SERIAL PRIMARY KEY,
+    robot_id        VARCHAR(50) NOT NULL,
+    map_name        VARCHAR(100),       -- 지도 이름 (예: 거실_최종)
+    s3_url          TEXT NOT NULL,      -- S3 이미지 주소
+    
+    -- [Map Metadata]
+    resolution      FLOAT,              -- 0.05 (m/pixel)
+    width           INTEGER,            -- 이미지 가로 크기
+    height          INTEGER,            -- 이미지 세로 크기
+    origin_x        FLOAT,              -- 원점 X
+    origin_y        FLOAT,              -- 원점 Y
+    origin_theta    FLOAT,              -- 원점 회전각
+    
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 로봇별로 최신 지도를 빨리 찾기 위한 인덱스
+CREATE INDEX IF NOT EXISTS idx_robot_maps_robot_id ON robot_maps(robot_id, created_at DESC);
