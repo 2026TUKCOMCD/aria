@@ -236,7 +236,6 @@ Content-Type: multipart/form-data
     {
       "id": 1,               // 구역 고유 ID (이동 명령 내릴 때 사용)
       "name": "거실",         // 화면에 표시할 이름
-      "color": "#FF5733",    // (선택) 지도에 표시할 색상
       "center": { "x": 10.5, "y": 5.2 }, // 방의 중심 좌표 (이동 목표 지점)
       "area": {              // (선택) 방의 영역 (사각형)
         "x_min": 5.0, "y_min": 2.0,
@@ -246,7 +245,6 @@ Content-Type: multipart/form-data
     {
       "id": 2,
       "name": "주방",
-      "color": "#33FF57",
       "center": { "x": 20.0, "y": 15.0 },
       "area": { ... }
     }
@@ -265,6 +263,23 @@ Content-Type: multipart/form-data
 - **Response**: 
 ```json
 { "success": true }
+- ** Request: 
+```json
+{
+  "zones": [
+    {
+      "id": 1,
+      "name": "거실",
+      "center": { "x": 10.5, "y": 5.2 }, // 방의 중심 좌표 (이동 목표 지점)
+      "area": {              // (선택) 방의 영역 (사각형)
+        "x_min": 5.0, "y_min": 2.0,
+        "x_max": 15.0, "y_max": 8.0
+      }
+    },
+    { "id": 2, "name": "안방", ... }
+  ]
+}
+
 ```
 </details>
 

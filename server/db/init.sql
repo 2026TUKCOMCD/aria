@@ -99,3 +99,19 @@ CREATE TABLE IF NOT EXISTS robot_maps (
 
 -- 로봇별로 최신 지도를 빨리 찾기 위한 인덱스
 CREATE INDEX IF NOT EXISTS idx_robot_maps_robot_id ON robot_maps(robot_id, created_at DESC);
+
+-- =========================================================
+-- [PART 5] 구역 관리를 위한 테이블 - 이슈#132
+-- =========================================================
+
+CREATE TABLE robot_zones (
+    zone_id SERIAL PRIMARY KEY,
+    robot_id VARCHAR(50) NOT NULL,
+    zone_name VARCHAR(50) NOT NULL,
+    center_data JSONB NOT NULL,
+    area_data JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 2. 로봇 ID와 방 이름의 조합을 '고유값'으로 묶기 
+ALTER TABLE robot_zones ADD CONSTRAINT unique_robot_zone_name UNIQUE (robot_id, zone_name);
