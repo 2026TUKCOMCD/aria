@@ -2,10 +2,16 @@ services:
   aria-ai-test:
     build: .
     container_name: aria_ai_standalone
+    # 1. 환경 변수 파일로 상위 .env 지정
+    env_file:
+      - ../.env
     devices:
       - "/dev/serial0:/dev/serial0"
-      - "/dev/video0:/dev/video0"
     environment:
       - PYTHONPATH=/app
+    # 2. 볼륨 설정을 통해 상위 .env를 컨테이너 안으로 직접 넣어줌
+    volumes:
+      - .:/app
+      - ../.env:/app/.env 
     stdin_open: true
     tty: true
