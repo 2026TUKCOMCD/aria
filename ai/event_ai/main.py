@@ -1,8 +1,10 @@
 import sys
 import os
 import time
+import json
 from datetime import datetime
 import requests
+from dotenv import load_dotenv
 
 # [1] 경로 설정: 최상위 ai/ 폴더를 기준으로 모듈을 찾도록 설정
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -12,17 +14,31 @@ try:
     from event_ai.inference import run_ai_inference, init_inference_engine
     from event_ai.packet_parser import PacketParser
     from event_ai.buffer import AirQualityBuffer
-    # 절대 경로 임포트
     from activity_ai.smart_activity import SmartActivityDetector
 except ImportError as e:
-    print(f" 모듈 임포트 실패: {e}")
+    print(f"모듈 임포트 실패: {e}")
     sys.exit(1)
 
+# main.py (현재 상태 유지 또는 확인)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# event_ai 폴더에서 한 단계 위인 /app 폴더의 .env를 찾음
+dotenv_path = os.path.join(current_dir, '..', '.env')
+load_dotenv(dotenv_path)
+
 def main():
-    # --- 1. 초기화 ---
+    # --- 1. 초기화 및 설정 ---
     base_path = os.path.dirname(os.path.abspath(__file__))
-    
-    # [A] 공기질 센서 파서 (시리얼 연결)
+
+    # 환경 변수에서 클라우드 설정 로드 (보안 강화)
+    CLOUD_URL = os.getenv("ARIA_LOG_API_URL")
+    SECRET_TOKEN = os.getenv("ARIA_SECRET_TOKEN")
+    ROBOT_ID = os.getenv("ROBOT_ID", "1")
+
+    if not CLOUD_URL or not SECRET_TOKEN:
+        print("에러: 환경 변수(URL 또는 Token)가 설정되지 않았습니다. .env 파일을 확인하세요.")
+        sys.exit(1)
+
+    # [A] 공기질 센서 파서
     try:
         parser = PacketParser(port='/dev/serial0', baudrate=115200)
         print("센서 연결 성공: /dev/serial0")
@@ -30,30 +46,34 @@ def main():
         print(f"센서 연결 실패: {e}")
         parser = None
 
-    # [B] 센서 AI 엔진 (모델 & 스케일러 로드)
+    # [B] 센서 AI 엔진
     model_path = os.path.join(base_path, "event_model.pt")
     scaler_path = os.path.join(base_path, "scaler.pkl")
     engine = init_inference_engine(model_path=model_path, scaler_path=scaler_path)
 
-    # [C] YOLO 비전 모듈 (객체 생성 필수)
+    # [C] YOLO 비전 모듈
     vision_module = SmartActivityDetector()
-    
+
     # [D] 데이터 버퍼 (30분 롤링)
     aq_buffer = AirQualityBuffer(max_len=900)
 
-    # 관리용 변수
+    # [E] 로컬 백업 폴더
+    backup_dir = os.path.join(base_path, "failed_logs")
+    if not os.path.exists(backup_dir):
+        os.makedirs(backup_dir)
+
+    # 관리 변수
     air_packet_count = 0
     last_display = time.time()
     last_inference = time.time()
 
-    # 설정값 (Thresholds)
-    # PM2.5 기울기 \Delta > 0.5 일 때 AI 추론 시작
-    PM25_SLOPE_THRESHOLD = 0.5  
-    PROB_THRESHOLD = 0.70       
-    CLOUD_URL = "https://your-cloud-server.com/api/v1/upload"
+    # 임계치 설정
+    PM25_SLOPE_THRESHOLD = 0.5
+    PROB_THRESHOLD = 0.70
 
     print("\n" + "="*50)
-    print("ARIA AI 시스템 가동: [센서 + 비전 통합 모드]")
+    print(f"ARIA AI 시스템 가동: [ID: {ROBOT_ID}]")
+    print("보안 업링크 및 데이터 아카이빙 활성화")
     print("="*50)
 
     try:
@@ -64,69 +84,85 @@ def main():
                 if packet and packet.get('type') == 'AIR':
                     air_packet_count += 1
                     aq_buffer.add_data(
-                        temp=packet['temp'],
-                        humi=packet['humi'],
-                        pm25=packet['pm25'],
-                        voc=packet['voc']
+                        temp=packet['temp'], humi=packet['humi'],
+                        pm25=packet['pm25'], voc=packet['voc']
                     )
 
             now = time.time()
 
-            # [3] AI 추론 및 비전 검증 (2초 주기로 체크)
+            # [3] AI 추론 및 비전 검증 (2초 주기)
             if now - last_inference >= 2.0:
-                # 버퍼가 어느 정도 쌓였을 때만 실행 (최소 5분 데이터)
+                last_inference = now
+
                 if len(aq_buffer.buffer) >= 150:
                     features = aq_buffer.get_session_features()
 
-                    # PM2.5 급증 감지 시 추론 실행
+                    # 1단계: 기울기 급증 시 AI 가동
                     if features and features['pm25_slope'] > PM25_SLOPE_THRESHOLD:
-                        prob = run_ai_inference(engine, aq_buffer.buffer)
+                        prob_res = run_ai_inference(engine, aq_buffer.buffer)
+                        prob = prob_res.get('cooking', 0.0)
 
-                        # 요리 확률이 임계치를 넘으면 비전 검증 트리거
-                        if prob is not None and prob >= PROB_THRESHOLD:
-                            print(f"\n[AI 경보] 요리 확률 {prob*100:.1f}%! 비전 검증을 시작합니다.")
+                        # 2단계: AI 확률 임계치 초과 시 비전(YOLO) 트리거
+                        if prob >= PROB_THRESHOLD:
+                            print(f"\n[AI 경보] 요리 확률 {prob*100:.1f}%! 비전 검증 시작...")
 
-                            # [C4-1] YOLO 비전 검증 (객체를 통해 메서드 호출)
                             yolo_res = vision_module.detect_cooking_event(
                                 corridor_video="data/videos/current_corridor.mp4",
                                 kitchen_video="data/videos/current_kitchen.mp4"
                             )
-
                             print(f"YOLO 결과: {yolo_res['reason']} (확정: {yolo_res['confirmed']})")
 
-                            # [C4-2] 데이터 원샷 패키징
-                            snapshot = aq_buffer.get_full_logs()
-                            final_package = {
-                                "meta": {
-                                    "timestamp": datetime.now().isoformat(),
-                                    "predicted_prob": float(prob),
-                                    "yolo_verified": yolo_res['confirmed'],
-                                    "stats": features
-                                },
-                                "raw_logs": snapshot
-                            }
+                            # 3단계: 데이터 원샷 패키징 (C4-2: buffer.py의 메서드 활용)
+                            final_package = aq_buffer.make_package(
+                                robot_id=ROBOT_ID,
+                                predicted_prob=prob,
+                                yolo_verified=yolo_res['confirmed'],
+                                features=features
+                            )
 
-                            # [C4-3] 클라우드 전송
-                            try:
-                                # response = requests.post(CLOUD_URL, json=final_package, timeout=10)
-                                print(f"[Cloud] {len(snapshot)}개의 데이터 패키지를 전송했습니다.")
-                            except Exception as e:
-                                print(f"전송 실패: {e}")
+                            # 4단계: 클라우드 전송 및 안정성 검증 (C4-3)
+                            success = False
+                            max_retries = 3
 
-                last_inference = now
+                            for attempt in range(max_retries):
+                                try:
+                                    headers = {
+                                        'Content-Type': 'application/json',
+                                        'X-ARIA-SECRET': SECRET_TOKEN # 보안 헤더 추가
+                                    }
+                                    response = requests.post(CLOUD_URL, json=final_package, headers=headers, timeout=15)
 
-            # [4] 상태 요약 리포트 (5초 주기)
+                                    if response.status_code == 200:
+                                        res_data = response.json()
+                                        print(f"[Cloud] 전송 성공! (S3 경로: {res_data.get('path', 'N/A')})")
+                                        success = True
+                                        break
+                                    else:
+                                        print(f"[Cloud] 전송 실패 (시도 {attempt+1}/{max_retries}): {response.status_code}")
+                                except Exception as e:
+                                    print(f"[Cloud] 네트워크 오류: {e}")
+
+                                if attempt < max_retries - 1:
+                                    time.sleep(2)
+
+                            # 최종 실패 시 로컬 백업
+                            if not success:
+                                backup_filename = f"fail_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                                backup_path = os.path.join(backup_dir, backup_filename)
+                                with open(backup_path, 'w', encoding='utf-8') as f:
+                                    json.dump(final_package, f, ensure_ascii=False, indent=4)
+                                print(f"데이터 로컬 백업 완료: {backup_path}")
+
+            # [4] 상태 요약 (5초 주기)
             if now - last_display >= 5.0:
                 current_pm = aq_buffer.buffer[-1]['pm25'] if aq_buffer.buffer else 'N/A'
-                print(f"[Status] Buffer: {len(aq_buffer.buffer)}/900 | "
-                      f"Air Packets: {air_packet_count} | "
-                      f"Current PM2.5: {current_pm}")
+                print(f"[Status] Buffer: {len(aq_buffer.buffer)}/900 | PM2.5: {current_pm}")
                 last_display = now
 
             time.sleep(0.01)
 
     except KeyboardInterrupt:
-        print("\n시스템을 안전하게 종료합니다.")
+        print("\n시스템을 종료합니다.")
     finally:
         if parser and parser.ser:
             parser.ser.close()
