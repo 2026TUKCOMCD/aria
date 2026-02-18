@@ -14,3 +14,10 @@ robot/src/external/rf2o_laser_odometry/
 #Mac OS
 .DS_Store
 **/.DS-Store
+
+# 데이터셋 및 모델
+*.pt
+*.pkl
+ARIA_Sync/data_lake/
+ARIA_Sync/valid_manifest.json
+aria_augmented_data.json
