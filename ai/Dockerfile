@@ -20,11 +20,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# 5. 소스 코드 전체 복사
-COPY . .
+# 5. [수정] 현재 폴더의 모든 내용을 /app/ai 폴더로 복사
+COPY . /app/ai/
 
-# 6. 파이썬 경로 설정: 루트(/app)와 하위 모듈 폴더들을 모두 추가
-ENV PYTHONPATH=/app:/app/event_ai:/app/event_ai/core
+ENV PYTHONPATH=/app
 
-# 7. 실행
-CMD ["python3", "event_ai/core/main.py"]
+# 파일이 진짜 있는지 확인하고 실행하게끔 세팅
+CMD ["python3", "/app/ai/event_ai/core/main.py"]
