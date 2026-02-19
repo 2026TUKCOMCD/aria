@@ -5,26 +5,29 @@ import json
 from datetime import datetime
 import requests
 from dotenv import load_dotenv
-
-# [1] 경로 설정: 최상위 ai/ 폴더를 기준으로 모듈을 찾도록 설정
-root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(root_dir)
+# [1] 경로 설정 최적화
+# 현재 파일 위치: event_ai/core/main.py
+# project_root는 ai/ 폴더가 있는 최상위 경로를 가리키게 설정합니다.
+current_file_path = os.path.abspath(__file__)
+# core -> event_ai -> ai(root) 순으로 세 단계 위로 이동
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_file_path)))
+sys.path.append(project_root)
 
 try:
-    from event_ai.inference import run_ai_inference, init_inference_engine
-    from event_ai.packet_parser import PacketParser
-    from event_ai.buffer import AirQualityBuffer
+    # 패키지 구조에 맞춘 절대 임포트
+    from ai.event_ai.core.inference import run_ai_inference, init_inference_engine
+    from ai.event_ai.core.packet_parser import PacketParser
+    from ai.event_ai.core.buffer import AirQualityBuffer
     from activity_ai.smart_activity import SmartActivityDetector
 except ImportError as e:
     print(f"모듈 임포트 실패: {e}")
+    print(f"현재 탐색 경로(sys.path): {sys.path}")
     sys.exit(1)
 
-# main.py (현재 상태 유지 또는 확인)
-current_dir = os.path.dirname(os.path.abspath(__file__))
-# event_ai 폴더에서 한 단계 위인 /app 폴더의 .env를 찾음
-dotenv_path = os.path.join(current_dir, '..', '.env')
+# 환경 변수 로드 (.env 위치 대응)
+# event_ai 폴더 또는 프로젝트 루트에 있는 .env를 탐색합니다.
+dotenv_path = os.path.join(project_root, "ai", "event_ai", ".env")
 load_dotenv(dotenv_path)
-
 def main():
     # --- 1. 초기화 및 설정 ---
     base_path = os.path.dirname(os.path.abspath(__file__))
@@ -47,8 +50,8 @@ def main():
         parser = None
 
     # [B] 센서 AI 엔진
-    model_path = os.path.join(base_path, "event_model.pt")
-    scaler_path = os.path.join(base_path, "scaler.pkl")
+    model_path = os.path.join(base_path, "..", "models", "event_model.pt")
+    scaler_path = os.path.join(base_path, "..", "models", "scaler.pkl")
     engine = init_inference_engine(model_path=model_path, scaler_path=scaler_path)
 
     # [C] YOLO 비전 모듈
@@ -58,7 +61,7 @@ def main():
     aq_buffer = AirQualityBuffer(max_len=900)
 
     # [E] 로컬 백업 폴더
-    backup_dir = os.path.join(base_path, "failed_logs")
+    backup_dir = os.path.join(base_path, "..", "failed_logs")
     if not os.path.exists(backup_dir):
         os.makedirs(backup_dir)
 
