@@ -24,7 +24,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY . .
 
 # 6. 파이썬 경로 설정: 루트(/app)와 하위 모듈 폴더들을 모두 추가
-ENV PYTHONPATH=/app:/app/activity_ai:/app/event_ai
+ENV PYTHONPATH=/app:/app/event_ai:/app/event_ai/core
 
 # 7. 실행
-CMD ["python3", "event_ai/main.py"]
+CMD ["python3", "event_ai/core/main.py"]
