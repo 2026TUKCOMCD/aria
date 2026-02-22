@@ -1,0 +1,16 @@
+{
+	"folders": [
+		{
+			"path": "../../../../../바탕 화면/project"
+		},
+		{
+			"name": "aria_sensor_interface",
+			"path": "../../aria_sensor_interface"
+		},
+		{
+			"name": "aria_sensor",
+			"path": ".."
+		}
+	],
+	"settings": {}
+}
