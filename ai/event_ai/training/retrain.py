@@ -25,7 +25,12 @@ class AdvancedCookingDetector(nn.Module):
 
 # 2. S3 데이터 로더 (10개 특성 추출 로직 포함)
 class AriaS3Dataset(Dataset):
-    def __init__(self, manifest_file="ARIA_Sync/valid_manifest.json"):
+    def __init__(self, manifest_file="../sync/valid_manifest.json"):
+        # 현재 retrain.py 위치 기반으로 프로젝트 루트(event_ai) 경로 확보
+        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.project_root = os.path.dirname(self.base_dir)
+        self.sync_dir = os.path.join(self.project_root, "sync") # 실제 sync 폴더 경로
+        
         with open(manifest_file, "r", encoding="utf-8") as f:
             self.file_paths = json.load(f)
 
@@ -33,7 +38,18 @@ class AriaS3Dataset(Dataset):
         return len(self.file_paths)
 
     def __getitem__(self, idx):
-        with open(self.file_paths[idx], 'r', encoding='utf-8') as f:
+        raw_path = self.file_paths[idx]
+        
+        # [해결책] manifest 내의 잘못된 경로를 현재 환경의 sync 폴더 경로로 변경
+        # 파일명(test_sample.json)만 추출해서 실제 데이터 위치와 결합합니다.
+        filename = os.path.basename(raw_path)
+        actual_path = os.path.join(self.sync_dir, "data_lake", filename)
+
+        if not os.path.exists(actual_path):
+            # 여전히 못 찾을 경우 상세 경로 출력하여 디버깅
+            raise FileNotFoundError(f"실제 경로에 파일이 없습니다: {actual_path}")
+
+        with open(actual_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
         # [중요] 엣지에서 전송한 raw_logs와 stats를 10개 피처로 재조합
@@ -56,8 +72,8 @@ def run_retraining():
     print(f"재학습 시작 (장치: {device})")
 
     # 기존 자산 로드
-    model_path = "event_model.pt"
-    scaler_path = "scaler.pkl"
+    model_path = "../models/event_model.pt"
+    scaler_path = "../models/scaler.pkl"
     
     if not os.path.exists(model_path):
         print("기존 모델 파일(event_model.pt)이 없습니다.")
