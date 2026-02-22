@@ -1,0 +1,4 @@
+Relay	KEYWORD1
+byte setState	KEYWORD2
+byte getState	KEYWORD2
+byte switchState	KEYWORD2
