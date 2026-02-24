@@ -186,17 +186,17 @@ class Esp32WheelOdomNode(Node):
             expected_checksum = self._calculate_checksum(pkt)
             if checksum != expected_checksum:
                 self.get_logger().warn(
-                    f"Checksum mismatch: got={checksum}, expected={expected_checksum}"
+                    f"[DEBUG] Checksum mismatch (ignored): got={checksum}, expected={expected_checksum}"
                 )
-                del self._rx_buffer[:self.PACKET_SIZE]
-                continue
+                #del self._rx_buffer[:self.PACKET_SIZE]
+                #continue
 
             # Consume packet
             del self._rx_buffer[:self.PACKET_SIZE]
 
             # Only process OdomPacket
-            if pkt_id != self.ODOM_ID:
-                continue
+            if pkt_id == self.ODOM_ID:
+                self.get_logger().info(f"[DEBUG] ODOM packet parsed: L={left_cnt}, R={right_cnt}")
 
             self.last_esp32_pose = (esp_x, esp_y, esp_th)
             self.last_esp32_vel = (esp_v, esp_w)
