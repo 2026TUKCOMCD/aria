@@ -184,10 +184,10 @@ class Esp32WheelOdomNode(Node):
 
             # Checksum validation (ESP32 sums first len-3 bytes)
             expected_checksum = self._calculate_checksum(pkt)
-            if checksum != expected_checksum:
-                self.get_logger().warn(
-                    f"[DEBUG] Checksum mismatch (ignored): got={checksum}, expected={expected_checksum}"
-                )
+	    if checksum != expected_checksum:
+    		self.get_logger().warn(
+        		f"[DEBUG] Checksum mismatch (ignored): got={checksum}, expected={expected_checksum}"
+    		)
                 #del self._rx_buffer[:self.PACKET_SIZE]
                 #continue
 
