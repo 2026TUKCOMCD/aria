@@ -16,6 +16,9 @@ export default {
         'main-sky': '#E9F3FF',
         'main-red': '#FF0000',
       },
+      backgroundImage: {
+      'aria-gradient': 'radial-gradient(circle at center, #ffffff 0%, #e0ebff 100%)',
+    }
     },
   },
   plugins: [],
