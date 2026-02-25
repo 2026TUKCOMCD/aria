@@ -1,15 +1,13 @@
 import './App.css'
+import Main from './pages/Main';
 
 function App() {
   return (
-    <div className="flex h-screen items-center justify-center bg-slate-900">
-      <div className="rounded-2xl bg-white p-8 shadow-2xl">
-        <h1 className="text-3xl font-extrabold text-indigo-600">
-          ARIA Tailwind + TS 세팅 완료!
-        </h1>
-      </div>
+    <div className="App">
+      {/* 지금은 다른 페이지가 없으니 바로 Main 페이지를 보여줍니다 */}
+      <Main />
     </div>
-  )
+  );
 }
 
-export default App
+export default App;
