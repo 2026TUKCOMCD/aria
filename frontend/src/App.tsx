@@ -1,12 +1,18 @@
-import './App.css'
-import Main from './pages/Main';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import Main from './pages/Main'; // 성국 님이 작성한 Main.tsx 경로
 
 function App() {
   return (
-    <div className="App">
-      {/* 지금은 다른 페이지가 없으니 바로 Main 페이지를 보여줍니다 */}
-      <Main />
-    </div>
+    <Router>
+      <Routes>
+        {/* 기본 경로(/)에 Main 컴포넌트를 배치합니다 */}
+        <Route path="/" element={<Main />} />
+        
+        {/* 나중에 추가할 페이지들 예시 */}
+        <Route path="/map" element={<div>맵 페이지</div>} />
+        <Route path="/settings" element={<div>설정 페이지</div>} />
+      </Routes>
+    </Router>
   );
 }
 
