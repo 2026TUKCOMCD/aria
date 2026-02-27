@@ -17,7 +17,7 @@ const MainPage = () => {
   const [battery] = useState(80);
 
   return (
-    <div className="flex min-h-screen flex-col pb-[100px] font-sans mt-3">
+    <div className="flex min-h-screen flex-col pb-[100px] font-sans">
       <header className="flex items-center justify-between px-9 pt-10">
         <h1 className="text-[20px] font-[900] text-black tracking-tight">ARIA</h1>
         <span className="text-[18px] font-bold text-main-blue">배터리: {battery}%</span>
