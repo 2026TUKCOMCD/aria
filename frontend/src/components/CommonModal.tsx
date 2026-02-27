@@ -1,4 +1,4 @@
-export type ModalType = 'RESET' | 'ERROR' | 'AI_RESET';
+type ModalType = 'RESET' | 'ERROR' | 'AI_RESET';
 
 interface CommonModalProps {
   isOpen: boolean;
@@ -74,4 +74,5 @@ const CommonModal = ({ isOpen, type, onConfirm, onClose }: CommonModalProps) => 
   );
 };
 
+export type { ModalType }; // 타입을 내보낼 때는 'type' 키워드를 붙여주면 더 안전합니다.
 export default CommonModal;
