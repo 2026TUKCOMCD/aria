@@ -1,20 +1,30 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import Main from './pages/Main'; // 성국 님이 작성한 Main.tsx 경로
+import MainPage from './pages/MainPage'; 
 import AuthPage from './pages/AuthPage';
 import ErrorPage from './pages/ErrorPage';
+import Navigation from './components/Navigation';
+
 function App() {
   return (
     <Router>
-      <Routes>
-        {/* 기본 경로(/)에 Main 컴포넌트를 배치합니다 */}
-        <Route path="/" element={<Main />} />
-        
-        {/* 나중에 추가할 페이지들 예시 */}
-        <Route path="/map" element={<div>맵 페이지</div>} />
-        <Route path="/settings" element={<div>설정 페이지</div>} />
-        <Route path="/auth" element={<AuthPage />} />
-        <Route path="/error" element={<ErrorPage />} />
-      </Routes>
+      <div className="min-h-screen bg-gray-200 flex justify-center items-center">
+        <div 
+          className="relative w-full max-w-[450px] min-h-screen shadow-2xl flex flex-col overflow-hidden font-sans"
+          style={{ 
+            background: 'radial-gradient(circle at 50% 0%, #ffffff 30%, #e0ebff 100%)' 
+          }}
+        >
+          <div className="flex-1 overflow-y-auto">
+            <Routes>
+              <Route path="/" element={<MainPage />} />
+              <Route path="/auth" element={<AuthPage />} />
+              <Route path="/error" element={<ErrorPage />} />
+            </Routes>
+          </div>
+          
+          <Navigation />
+        </div>
+      </div>
     </Router>
   );
 }
