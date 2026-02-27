@@ -4,7 +4,7 @@ import AuthPage from './pages/AuthPage';
 import ErrorPage from './pages/ErrorPage';
 import Navigation from './components/Navigation';
 import MapPage from './pages/MapPage';
-
+import SettingsPage from './pages/SettingsPage';
 
 function App() {
   return (
@@ -20,6 +20,7 @@ function App() {
             <Routes>
               <Route path="/" element={<MainPage />} />
               <Route path="/map" element={<MapPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
               <Route path="/auth" element={<AuthPage />} />
               <Route path="/error" element={<ErrorPage />} />
             </Routes>
