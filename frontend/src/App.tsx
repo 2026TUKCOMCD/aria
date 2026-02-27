@@ -3,6 +3,8 @@ import MainPage from './pages/MainPage';
 import AuthPage from './pages/AuthPage';
 import ErrorPage from './pages/ErrorPage';
 import Navigation from './components/Navigation';
+import MapPage from './pages/MapPage';
+
 
 function App() {
   return (
@@ -17,6 +19,7 @@ function App() {
           <div className="flex-1 overflow-y-auto">
             <Routes>
               <Route path="/" element={<MainPage />} />
+              <Route path="/map" element={<MapPage />} />
               <Route path="/auth" element={<AuthPage />} />
               <Route path="/error" element={<ErrorPage />} />
             </Routes>
