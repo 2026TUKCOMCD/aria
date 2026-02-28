@@ -156,10 +156,25 @@ def main():
                                     json.dump(final_package, f, ensure_ascii=False, indent=4)
                                 print(f"데이터 로컬 백업 완료: {backup_path}")
 
+            # [4] 상태 요약 (5초 주기) - 모든 센서 데이터 출력 버전
             # [4] 상태 요약 (5초 주기)
             if now - last_display >= 5.0:
-                current_pm = aq_buffer.buffer[-1]['pm25'] if aq_buffer.buffer else 'N/A'
-                print(f"[Status] Buffer: {len(aq_buffer.buffer)}/900 | PM2.5: {current_pm}")
+                if aq_buffer.buffer:
+                    last_data = aq_buffer.buffer[-1]
+                    
+                    temp = last_data.get('temperature') or last_data.get('temp', 'N/A')
+                    humi = last_data.get('humidity') or last_data.get('humi', 'N/A')
+                    pm25 = last_data.get('pm25', 'N/A')
+                    voc = last_data.get('voc', 'N/A')
+                    
+                    print(f"\n[Status] {datetime.now().strftime('%H:%M:%S')}")
+                    print(f" 온도: {temp}°C | 습도: {humi}%")
+                    print(f" PM2.5: {pm25} µg/m³ | VOC: {voc} ppm")
+                    print(f" Buffer: {len(aq_buffer.buffer)}/900 | Packet Count: {air_packet_count}")
+                    print("-" * 45)
+                else:
+                    print("[Status] 센서 데이터를 기다리는 중...")
+                
                 last_display = now
 
             time.sleep(0.01)
