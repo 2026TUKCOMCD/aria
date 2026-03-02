@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS robot_status_log (
     power_status    VARCHAR(20),       -- ON, OFF, SLEEP
     operation_mode  VARCHAR(20),       -- AUTO, MANUAL, TURBO
     current_zone    VARCHAR(50),       -- 거실, 주방 등
+    movement_status VARCHAR(20),
     
     -- [Air Quality]
     air_score       INTEGER,           -- 종합 점수
