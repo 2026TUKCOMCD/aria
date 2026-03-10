@@ -67,21 +67,35 @@ class PacketParser:
         except Exception: return None
 
     def read_packet(self) -> Optional[dict]:
-        """시리얼 버퍼를 감시하다가 유효한 패킷이 들어오면 파싱 결과를 반환"""
-        if self.ser.in_waiting > 0:
-            b = self.ser.read(1)
-            # 0x55 0xAA 순서로 들어오는지 확인 (Little Endian 기준)
-            if b == b'\x55':
-                if self.ser.read(1) == b'\xAA':
-                    p_id_b = self.ser.read(1)
-                    if not p_id_b: return None
-                    p_id = p_id_b[0]
 
-                    # ID에 따라 나머지 데이터 읽기
-                    if p_id == 0: # NAV
-                        return self.parse_nav_packet(b'\x55\xAA' + p_id_b + self.ser.read(35))
-                    elif p_id == 1: # AIR
-                        return self.parse_air_packet(b'\x55\xAA' + p_id_b + self.ser.read(19))
-                    elif p_id == 3: # ODOM
-                        return self.parse_odom_packet(b'\x55\xAA' + p_id_b + self.ser.read(31))
-        return None
+    while self.ser.in_waiting > 0:
+
+        b = self.ser.read(1)
+
+        if b == b'\x55':
+            b2 = self.ser.read(1)
+
+            if b2 == b'\xAA':
+
+                p_id_b = self.ser.read(1)
+                if not p_id_b:
+                    return None
+
+                p_id = p_id_b[0]
+
+                if p_id == 0:  # NAV
+                    data = b'\x55\xAA' + p_id_b + self.ser.read(35)
+                    if len(data) == 38:
+                        return self.parse_nav_packet(data)
+
+                elif p_id == 1:  # AIR
+                    data = b'\x55\xAA' + p_id_b + self.ser.read(19)
+                    if len(data) == 22:
+                        return self.parse_air_packet(data)
+
+                elif p_id == 3:  # ODOM
+                    data = b'\x55\xAA' + p_id_b + self.ser.read(31)
+                    if len(data) == 34:
+                        return self.parse_odom_packet(data)
+
+    return None
