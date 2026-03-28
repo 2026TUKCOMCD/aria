@@ -46,6 +46,11 @@ def lambda_handler(event, context):
             if value not in ["ON", "OFF"]:
                 return {'statusCode': 400, 'body': json.dumps({'message': 'Invalid value for TURBO. Must be ON or OFF.'})}
             desired_state['turbo'] = value
+
+        elif command == "SLAM":
+            if value not in ["ON", "OFF"]:
+                return {'statusCode': 400, 'body': json.dumps({'message': 'Invalid value for SLAM.'})}
+            desired_state['slam'] = value    
             
         else:
             return {'statusCode': 400, 'body': json.dumps({'message': 'Invalid command. Must be POWER, MODE, or TURBO.'})}
