@@ -115,3 +115,15 @@ CREATE TABLE robot_zones (
 
 -- 2. 로봇 ID와 방 이름의 조합을 '고유값'으로 묶기 
 ALTER TABLE robot_zones ADD CONSTRAINT unique_robot_zone_name UNIQUE (robot_id, zone_name);
+
+-- =========================================================
+-- [PART 6] 이벤트 로그 테이블 - issue #128
+-- =========================================================
+
+CREATE TABLE robot_event_logs (
+    log_id SERIAL PRIMARY KEY,
+    robot_id VARCHAR(50) NOT NULL,
+    event_type VARCHAR(20) NOT NULL,
+    message TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
