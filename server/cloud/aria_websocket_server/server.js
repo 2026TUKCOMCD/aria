@@ -78,6 +78,41 @@ app.post('/api/alert', async(req, res) => {
 });
 
 // ==========================================
+// 파트 C: 프론트엔드 초기 화면용 과거 로그 조회 API (GET)
+// ==========================================
+// 프론트엔드가 GET 방식으로 /api/events 주소를 찌르면 실행됩니다.
+app.get('/api/events', async (req, res) => {
+    try {
+        console.log('프론트엔드에서 과거 로그 조회 요청 도착!');
+        
+        // 프론트에서 특정 로봇 ID를 요구할 경우를 대비 (기본값: aria-01)
+        const robotId = req.query.robot_id || 'aria_robot01';
+
+        // 타임라인 방식: 해당 로봇의 전체 로그 중 최신 7개 가져오기
+        const query = `
+            SELECT log_id, event_type, message, created_at 
+            FROM robot_event_logs 
+            WHERE robot_id = $1 
+            ORDER BY created_at DESC 
+            LIMIT 7
+        `;
+
+        // DB에 쿼리 날리기 ($1 자리에 robotId가 쏙 들어갑니다)
+        const { rows } = await pool.query(query, [robotId]);
+
+        // 프론트엔드에게 성공 메시지와 함께 데이터를 JSON으로 던져줌
+        res.status(200).json({
+            success: true,
+            data: rows
+        });
+
+    } catch (error) {
+        console.error('로그 조회 중 에러 발생:', error);
+        res.status(500).json({ success: false, error: 'DB 조회 실패' });
+    }
+});
+
+// ==========================================
 //  서버 켜기 (포트 3000번)
 // ==========================================
 server.listen(3000, () => {
