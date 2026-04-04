@@ -2,6 +2,19 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+// PostgreSQL DB 통역기 불러오기
+const { Pool } = require('pg') 
+
+//=====================================
+// DB 연결 셋업 (프라이빗 서브넷의 DB 정보 삽입)
+// ====================================
+const pool = new Pool({
+    host: '10.0.1.183',
+    user: 'aria_web',
+    password: 'raspberryraspberry',
+    database: 'postgres',
+    port: 5432
+})
 
 //  2. 서버 뼈대 만들기
 const app = express();
@@ -32,16 +45,36 @@ io.on('connection', (socket) => {
 // 파트 B: Lambda가 알림을 보낼 때 받는 API 엔드포인트
 // ==========================================
 // Lambda가 POST 방식으로 /api/alert 주소로 데이터를 보내면 여기가 실행됩니다.
-app.post('/api/alert', (req, res) => {
+app.post('/api/alert', async(req, res) => {
     const alertData = req.body; // Lambda가 보낸 데이터 (예: { message: "먼지 나쁨" })
     console.log('Lambda에서 알림 도착:', alertData);
 
-    // 핵심 포인트: io.emit()
+    try{
+        //DB에 저장 로직
+        const query = `
+      INSERT INTO robot_event_logs (robot_id, event_type, message, created_at)
+      VALUES ($1, $2, $3, NOW())
+    `;
+    // 람다가 보내는 데이터 구조에 맞게 매핑 (없으면 기본값 처리)
+    const values = [
+      alertData.robot_id || 'aria-01', 
+      alertData.event_type || 'INFO', 
+      alertData.message || JSON.stringify(alertData)
+    ];
+    
+    await pool.query(query, values);
+    console.log('DB 저장 완료!');
     // 현재 접속해 있는 "모든" 웹앱에게 'robot_alert'라는 이름으로 데이터를 확성기로 쏴줍니다!
     io.emit('robot_alert', alertData);
 
     // Lambda에게 200 OK 응답을 돌려줍니다.
     res.status(200).json({ success: true, message: '클라이언트들에게 알림 전송 완료!' });
+    } catch (error) {
+        console.error('DB 저장 중 에러 발생:', error);
+        // DB 저장에 실패하더라도 람다가 재시도하지 않도록 일단 500 에러를 반환합니다.
+        res.status(500).json({ success: false, error: 'DB 저장 실패' });
+    }
+    
 });
 
 // ==========================================
