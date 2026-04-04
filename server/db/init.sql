@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS robot_status_log (
     power_status    VARCHAR(20),       -- ON, OFF, SLEEP
     operation_mode  VARCHAR(20),       -- AUTO, MANUAL, TURBO
     current_zone    VARCHAR(50),       -- 거실, 주방 등
+    movement_status VARCHAR(20),
     
     -- [Air Quality]
     air_score       INTEGER,           -- 종합 점수
@@ -126,4 +127,15 @@ CREATE TABLE robot_event_logs (
     event_type VARCHAR(20) NOT NULL,
     message TEXT NOT NULL,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+  
+-- =========================================================
+-- [PART 7] 기상/취침 스케줄 관리를 위한 table- 이슈#184
+-- =========================================================
+
+CREATE TABLE IF NOT EXISTS robot_schedules (
+    robot_id VARCHAR(50) PRIMARY KEY,
+    wake_time VARCHAR(5),
+    sleep_time VARCHAR(5),
+    is_enabled BOOLEAN,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
