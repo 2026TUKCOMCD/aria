@@ -334,6 +334,40 @@ X-ARIA-SECRET: {SECRET_TOKEN}
 
 ---
 
+### GET Event Logging
+<details>
+<summary><code>GET</code> <b>/robots/{id}/events</b> - 과거 이벤트 로그 조회</summary>
+
+- **Description**: 메인페이지의 '이벤트 로그 보기' 팝업 등에 렌더링하기 위해, DB에 저장된 과거 이벤트(알림) 내역을 최신순으로 조회 (최대 7개)
+- **Recommended Response**: 200 OK
+- **Reason**: DB(robot_event_logs)에 이미 저장되어 있는 데이터를 단순히 읽어서 즉시 반환하므로
+- **Response**: 
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "log_id": 3,
+      "event_type": "귀가",
+      "message": "귀가 이벤트가 감지되었습니다.",
+      "created_at": "2026-04-04T15:10:00.000Z"
+    },
+    {
+      "log_id": 2,
+      "event_type": "순찰중",
+      "message": "순찰을 시작합니다.",
+      "created_at": "2026-04-04T14:40:00.000Z"
+    },
+    {
+      "log_id": 1,
+      "event_type": "요리 이벤트 감지",
+      "message": "주방에서 요리 이벤트가 감지되어 터보 모드를 실행합니다.",
+      "created_at": "2026-04-04T11:20:00.000Z"
+    }
+  ]
+}
+```
+
 ## 2. ⚡ MQTT Topics (Real-time)
 
 > **Broker**: AWS IoT Core  
