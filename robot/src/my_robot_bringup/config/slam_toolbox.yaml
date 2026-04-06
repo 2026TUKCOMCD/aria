@@ -6,8 +6,14 @@ slam_toolbox:
     map_frame: map
     odom_frame: odom
 
-    base_frame: base_link        # <- 1번에서 본 child_frame_id로 바꿔!
+    base_frame: base_footprint
     transform_timeout: 3.0
-    throttle_scans: 3
+    throttle_scans: 1
     scan_queue_size: 200
 
+    map_update_interval: 1.0
+    resolution: 0.02
+
+    minimum_time_interval: 0.1
+    minimum_travel_distance: 0.02
+    minimum_travel_heading: 0.02
