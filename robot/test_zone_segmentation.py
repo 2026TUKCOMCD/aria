@@ -8,17 +8,17 @@ import cv2
 import numpy as np
 
 # ── 설정 ──────────────────────────────────────────────────────────────────
-MAP_PGM  = "maps/aria_map_20260220_0449.pgm"
-MAP_YAML = "maps/aria_map_20260220_0449.yaml"
+MAP_PGM  = "maps/aria_map_clean.pgm"
+MAP_YAML = "maps/aria_map_clean.yaml"
 OUT_PATH = "maps/zone_result.png"
 
-RESOLUTION   = 0.05   # m/px  (yaml 기준)
-ORIGIN_X     = -2.85  # m
-ORIGIN_Y     = -3.58  # m
+RESOLUTION   = 0.02   # m/px  (yaml 기준)
+ORIGIN_X     = -1.94  # m
+ORIGIN_Y     = -0.567 # m
 FREE_THRESH  = 0.25   # nav2 map_server 기준
 OCC_THRESH   = 0.65
 
-EROSION_KERNEL_SIZE = 16   # px  (~0.8m 문틀 너비)
+EROSION_KERNEL_SIZE = 40   # px  (~0.8m 문틀 너비, 0.02m/px 기준)
 MIN_ZONE_AREA_M2    = 1.0  # m²  이하 구역 제거
 # ─────────────────────────────────────────────────────────────────────────
 
