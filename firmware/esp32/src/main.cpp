@@ -513,6 +513,15 @@ void setup() {
     } else {
         Serial.println("✓ IMU 준비 (가속도+자이로)");
     }
+
+    //odom 패킷 크기 확인 로그
+    Serial.println("✓ 모터 & 엔코더 준비 (핀 초기화 완료)");
+    lastOdomUpdate = millis();
+
+    Serial.printf("sizeof(NavPacket)=%d\n", (int)sizeof(NavPacket));
+    Serial.printf("sizeof(AirPacket)=%d\n", (int)sizeof(AirPacket));
+    Serial.printf("sizeof(OdomPacket)=%d\n", (int)sizeof(OdomPacket));
+    Serial.printf("sizeof(MotorCommandPacket)=%d\n", (int)sizeof(MotorCommandPacket));
     
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // ToF 센서

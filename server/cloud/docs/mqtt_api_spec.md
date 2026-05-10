@@ -306,7 +306,67 @@ Content-Type: multipart/form-data
 -> 휴가 시 집 비울 때, 기상 스케줄에 맞춰 로봇 power on되지 않음
 </details>
 
+
+### 🧠 AI & Data Logging
+
+<details>
+<summary><code>POST</code> <b>/robots/{id}/ai/logs</b> - AI 학습 데이터 업로드 (S3 아카이빙)</summary>
+<br>
+
+- **Direction**: Robot → Cloud  
+- **Description**:  
+  AI 이벤트(예: Cooking 감지) 발생 시, 로봇이 최근 센서 히스토리와 AI 추론 결과를 패키징하여  
+  클라우드로 업로드합니다.  
+  서버는 데이터를 S3에 아카이빙하고 저장 경로를 반환합니다.
+
+- **Authentication**:  
+  요청 헤더에 사전 공유된 Secret Token 필요
+
+- **Header**:
+```http
+Content-Type: application/json
+X-ARIA-SECRET: {SECRET_TOKEN}
+```
+
+- **Success Response**: 200 OK  
+- **Failure Response**: 403 Unauthorized / 500 Internal Server Error  
+</details>
+
 ---
+
+### GET Event Logging
+<details>
+<summary><code>GET</code> <b>/robots/{id}/events</b> - 과거 이벤트 로그 조회</summary>
+
+- **Description**: 메인페이지의 '이벤트 로그 보기' 팝업 등에 렌더링하기 위해, DB에 저장된 과거 이벤트(알림) 내역을 최신순으로 조회 (최대 7개)
+- **Recommended Response**: 200 OK
+- **Reason**: DB(robot_event_logs)에 이미 저장되어 있는 데이터를 단순히 읽어서 즉시 반환하므로
+- **Response**: 
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "log_id": 3,
+      "event_type": "귀가",
+      "message": "귀가 이벤트가 감지되었습니다.",
+      "created_at": "2026-04-04T15:10:00.000Z"
+    },
+    {
+      "log_id": 2,
+      "event_type": "순찰중",
+      "message": "순찰을 시작합니다.",
+      "created_at": "2026-04-04T14:40:00.000Z"
+    },
+    {
+      "log_id": 1,
+      "event_type": "요리 이벤트 감지",
+      "message": "주방에서 요리 이벤트가 감지되어 터보 모드를 실행합니다.",
+      "created_at": "2026-04-04T11:20:00.000Z"
+    }
+  ]
+}
+```
 
 ## 2. ⚡ MQTT Topics (Real-time)
 
@@ -419,58 +479,6 @@ Content-Type: multipart/form-data
 }
 ```
 - **Reason(QoS)**: 로봇이 "이거 봐주세요" 하고 보낸 건데, 서버가 못 받아서 씹히면 안 됨
-</details>
-
-<details>
-<summary><b>Data Log</b> (<code>aria/{id}/data/log</code>) - QoS 0</summary>
-<br>
-
-- **Direction**: Robot → Cloud
-- **Description**: 추후 AI 재학습(Retraining)을 위한 로그 데이터 전송
-- **Payload**: 
-```json
-{
-  "request_id": "req_1705640000",   // (선택) 요청 고유 ID
-  "timestamp": "2026-01-19T21:30:00", // 트리거 발생 시각 (현재)
-  "trigger_source": "VOC_SPIKE",    // 무엇 때문에 보냈는지 (VOC 급증, PIR 미감지 등)
-  
-  "metadata": {
-    "interval_sec": 30,             // 데이터 수집 간격 (30초)
-    "total_duration_min": 30,       // 총 데이터 길이 (30분)
-    "sample_count": 60              // 배열 안에 들어있는 데이터 개수
-  },
-
-  // 핵심: 30분 전부터 현재까지의 데이터 60개를 순서대로 담음
-  "sensor_history": [
-    {
-      "offset_min": -30.0,          // 30분 전
-      "pm25": 12.0,
-      "voc": 50,
-      "temperature": 24.5, 
-      "humidity": 45.0,    
-      "pir": true
-    },
-    {
-      "offset_min": -29.5,          // 29분 30초 전
-      "pm25": 12.5,
-      "voc": 55,
-      "temperature": 24.5, 
-      "humidity": 45.0,
-      "pir": true
-    },
-    // ... (중간 생략) ...
-    {
-      "offset_min": 0.0,            // 현재 (트리거 발생 시점)
-      "pm25": 85.0,   
-      "voc": 450,
-      "temperature": 24.5, 
-      "humidity": 45.0,
-      "pir": true
-    }
-  ]
-}
-```
-- **Reason(QoS)**: 학습 데이터는 대량일 수 있고, 데이터 한두 개 빠져도 AI 성능에 큰 영향 없음. 빠르게 보내는 게 best
 </details>
 
 <details>
