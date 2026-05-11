@@ -6,7 +6,7 @@
 
 #include <Arduino.h>
 #include <Wire.h>
-#include "Adafruit_VL53L1X.h"
+#include "Adafruit_VL53L0X.h"
 #include "mpu9250.h"         
 #include "Adafruit_SGP40.h"
 #include "CytronMotorDriver.h"
@@ -22,6 +22,7 @@
 #define I2C_SCL 22
 #define TOF1_XSHUT 26
 #define TOF2_XSHUT 27
+#define TOF3_XSHUT 12  // GPIO12: 부팅 시 LOW 유지 필요 → 10K 풀다운 저항 필수
 
 #define MOTOR1_PWM 25
 #define MOTOR1_DIR 33
@@ -68,6 +69,7 @@ struct NavPacket {
     uint8_t id = 0;
     float tof1Distance;
     float tof2Distance;
+    float tof3Distance;
     float accelX;
     float accelY;
     float accelZ;
@@ -119,7 +121,7 @@ struct MotorCommandPacket {
 // [4] 전역 객체 및 변수
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Adafruit_VL53L1X tof1, tof2; 
+Adafruit_VL53L0X tof1, tof2, tof3;
 MPU9250 imu(Wire, 0x68);
 Adafruit_SGP40 sgp;
 DHT dht(DHT_PIN, DHT_TYPE);
@@ -524,31 +526,44 @@ void setup() {
     Serial.printf("sizeof(MotorCommandPacket)=%d\n", (int)sizeof(MotorCommandPacket));
     
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // ToF 센서
+    // ToF 센서 (VL53L0X x3) — 하나씩 깨워서 I2C 주소 분리
+    //   tof1 → 0x30 / tof2 → 0x31 / tof3 → 0x29(기본)
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     pinMode(TOF1_XSHUT, OUTPUT);
     pinMode(TOF2_XSHUT, OUTPUT);
+    pinMode(TOF3_XSHUT, OUTPUT);
     digitalWrite(TOF1_XSHUT, LOW);
     digitalWrite(TOF2_XSHUT, LOW);
+    digitalWrite(TOF3_XSHUT, LOW);
     delay(10);
-    
+
+    // tof1: 0x29 → 0x30
     digitalWrite(TOF1_XSHUT, HIGH);
     delay(10);
-    if (!tof1.begin(0x29, &Wire)) {
+    if (!tof1.begin(0x29, false, &Wire)) {
         Serial.println("✗ ToF1 연결 실패");
     } else {
-        tof1.VL53L1X_SetI2CAddress(0x30);
-        tof1.startRanging();
+        tof1.setAddress(0x30);
         Serial.println("✓ ToF1 준비 (0x30)");
     }
-    
+
+    // tof2: 0x29 → 0x31
     digitalWrite(TOF2_XSHUT, HIGH);
     delay(10);
-    if (!tof2.begin(0x29, &Wire)) {
+    if (!tof2.begin(0x29, false, &Wire)) {
         Serial.println("✗ ToF2 연결 실패");
     } else {
-        tof2.startRanging();
-        Serial.println("✓ ToF2 준비 (0x29)");
+        tof2.setAddress(0x31);
+        Serial.println("✓ ToF2 준비 (0x31)");
+    }
+
+    // tof3: 0x29 유지
+    digitalWrite(TOF3_XSHUT, HIGH);
+    delay(10);
+    if (!tof3.begin(0x29, false, &Wire)) {
+        Serial.println("✗ ToF3 연결 실패");
+    } else {
+        Serial.println("✓ ToF3 준비 (0x29)");
     }
     
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -610,14 +625,16 @@ void loop() {
     if (now - lastNav >= 50) {
         NavPacket nPkt;
         
-        if (tof1.dataReady()) { 
-            nPkt.tof1Distance = (float)tof1.distance(); 
-            tof1.clearInterrupt(); 
-        }
-        if (tof2.dataReady()) { 
-            nPkt.tof2Distance = (float)tof2.distance(); 
-            tof2.clearInterrupt(); 
-        }
+        VL53L0X_RangingMeasurementData_t measure;
+
+        tof1.rangingTest(&measure, false);
+        if (measure.RangeStatus != 4) nPkt.tof1Distance = (float)measure.RangeMilliMeter;
+
+        tof2.rangingTest(&measure, false);
+        if (measure.RangeStatus != 4) nPkt.tof2Distance = (float)measure.RangeMilliMeter;
+
+        tof3.rangingTest(&measure, false);
+        if (measure.RangeStatus != 4) nPkt.tof3Distance = (float)measure.RangeMilliMeter;
         
         if (imu.readSensor() > 0) {
             nPkt.accelX = imu.getAccelX_mss();
