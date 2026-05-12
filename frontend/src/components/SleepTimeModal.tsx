@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { saveRobotSchedule } from '../api/ARIARobotController';
 
 interface SleepTimeModalProps {
   isOpen: boolean;
@@ -9,12 +10,11 @@ interface SleepTimeModalProps {
 }
 
 const SleepTimeModal = ({ isOpen, onClose, onSave, robotId = "1" }: SleepTimeModalProps) => {
-  const API_BASE_URL = import.meta.env.VITE_ARIA_API_URL;
   const ROBOT_ID = import.meta.env.VITE_ROBOT_ID || "1";
-  const API_TOKEN = import.meta.env.VITE_API_SECRET_TOKEN;
   
   const [sleepTime, setSleepTime] = useState({ period: '오후', hour: '11', minute: '00' });
   const [wakeTime, setWakeTime] = useState({ period: '오전', hour: '07', minute: '00' });
+  const [enabled, setEnabled] = useState(true);
   const [isLoading, setIsLoading] = useState(false); // 로딩 상태 관리
 
   if (!isOpen) return null;
@@ -81,23 +81,11 @@ const SleepTimeModal = ({ isOpen, onClose, onSave, robotId = "1" }: SleepTimeMod
     setIsLoading(true);
 
     try {
-      // 환경 변수를 조합하여 URL 완성
-      const API_URL = `${API_BASE_URL}/robots/${ROBOT_ID}/schedule`;
-      
-      const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-ARIA-SECRET': API_TOKEN, // 보안 토큰이 있다면 헤더에 추가
-        },
-        body: JSON.stringify({
-          wake_time: wTime,
-          sleep_time: sTime,
-          enabled: true,
-        }),
+      await saveRobotSchedule(robotId || ROBOT_ID, {
+        wake_time: wTime,
+        sleep_time: sTime,
+        enabled,
       });
-
-      if (!response.ok) throw new Error('서버 응답 에러');
 
       onSave(sTime, wTime); 
       alert("수면 시간이 저장되었습니다.");
@@ -161,6 +149,25 @@ const SleepTimeModal = ({ isOpen, onClose, onSave, robotId = "1" }: SleepTimeMod
             </div>
           ))}
         </div>
+
+        <button
+          type="button"
+          onClick={() => setEnabled((value) => !value)}
+          className="mt-8 flex w-full items-center justify-between rounded-[18px] bg-main-sky px-5 py-4 shadow-inner transition-all active:scale-[0.98]"
+        >
+          <span className="text-[18px] font-black text-gray-800">스케줄 자동 적용</span>
+          <span
+            className={`flex h-8 w-14 items-center rounded-full p-1 transition-colors ${
+              enabled ? 'bg-main-blue' : 'bg-gray-300'
+            }`}
+          >
+            <span
+              className={`h-6 w-6 rounded-full bg-white shadow-md transition-transform ${
+                enabled ? 'translate-x-6' : 'translate-x-0'
+              }`}
+            />
+          </span>
+        </button>
 
         <div className="mt-10 flex justify-center">
           <button

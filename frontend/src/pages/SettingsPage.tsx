@@ -1,9 +1,14 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Navigation from '../components/Navigation';
 import CommonModal, { type ModalType } from '../components/CommonModal';
 import SleepTimeModal from '../components/SleepTimeModal';
+import useAuthStore from '../store/useAuthStore';
+import { resetRobotData } from '../api/ARIARobotController';
 
 const SettingsPage = () => {
+  const navigate = useNavigate();
+  const logout = useAuthStore((state) => state.logout);
   // 1. 공통 모달(초기화 등) 상태
   const [isCommonOpen, setIsCommonOpen] = useState(false);
   const [modalType, setModalType] = useState<ModalType>('RESET');
@@ -12,9 +17,7 @@ const SettingsPage = () => {
   const [isSleepOpen, setIsSleepOpen] = useState(false);
 
   // 환경 변수 불러오기
-  const API_BASE_URL = import.meta.env.VITE_ARIA_API_URL;
   const ROBOT_ID = import.meta.env.VITE_ROBOT_ID || "1";
-  const API_TOKEN = import.meta.env.VITE_API_SECRET_TOKEN;
 
   // --- [추가] 초기화 버튼 클릭 시 모달을 여는 함수 ---
   const handleOpenReset = (type: ModalType) => {
@@ -28,21 +31,8 @@ const SettingsPage = () => {
     const target = modalType === 'RESET' ? 'MAP' : 'AI';
 
     try {
-      const response = await fetch(`${API_BASE_URL}/robots/${ROBOT_ID}/reset`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-ARIA-SECRET': API_TOKEN,
-        },
-        body: JSON.stringify({ target: target }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        alert(data.message || "초기화 명령이 성공적으로 전송되었습니다.");
-      } else {
-        throw new Error("초기화 요청 실패");
-      }
+      const data = await resetRobotData(ROBOT_ID, target);
+      alert(data.message || "초기화 명령이 성공적으로 전송되었습니다.");
     } catch (error) {
       console.error("Reset Error:", error);
       alert("초기화 중 오류가 발생했습니다.");
@@ -56,6 +46,11 @@ const SettingsPage = () => {
     console.log(`설정된 시간 - 취침: ${sleep}, 기상: ${wake}`);
     // SleepTimeModal 내부에서 이미 API 호출을 하므로 여기서는 UI 처리만 합니다.
     setIsSleepOpen(false);
+  };
+
+  const handleLogout = () => {
+    logout();
+    navigate('/auth', { replace: true });
   };
 
   return (
@@ -84,6 +79,13 @@ const SettingsPage = () => {
           className="flex h-[80px] w-full items-center justify-center rounded-[20px] bg-main-blue text-[24px] font-black text-white shadow-xl active:scale-95 transition-all"
         >
           AI 초기화
+        </button>
+
+        <button
+          onClick={handleLogout}
+          className="flex h-[70px] w-full items-center justify-center rounded-[20px] bg-white text-[22px] font-black text-main-blue shadow-xl active:scale-95 transition-all"
+        >
+          로그아웃
         </button>
       </section>
 
