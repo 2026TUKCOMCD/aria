@@ -129,6 +129,158 @@ app.get('/api/events', async (req, res) => {
 // ==========================================
 //  서버 켜기 (포트 3000번)
 // ==========================================
+// ==========================================
+// Part D: Map and zone APIs for the web app
+// ==========================================
+// Temporary in-memory data. Replace this with DB/S3 queries when the backend is ready.
+const zoneStore = {
+    '1': [
+        {
+            id: 1,
+            name: '거실',
+            center: { x: 1.5, y: 1.2 },
+            area: { x_min: -1.5, y_min: -0.6, x_max: 4.3, y_max: 3.0 }
+        },
+        {
+            id: 2,
+            name: '주방',
+            center: { x: 6.5, y: 1.4 },
+            area: { x_min: 4.5, y_min: -0.4, x_max: 8.7, y_max: 3.1 }
+        },
+        {
+            id: 3,
+            name: '안방',
+            center: { x: 2.4, y: 5.6 },
+            area: { x_min: -1.2, y_min: 3.4, x_max: 5.4, y_max: 7.6 }
+        }
+    ]
+};
+
+app.get('/mock-map.svg', (req, res) => {
+    res.type('image/svg+xml').send(`
+        <svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+            <rect width="800" height="600" fill="#f8fafc"/>
+            <rect x="40" y="40" width="720" height="520" rx="12" fill="#ffffff" stroke="#1f2937" stroke-width="18"/>
+            <path d="M400 40v520M40 310h720" stroke="#1f2937" stroke-width="12"/>
+            <path d="M400 310h120M400 190h90M270 310v120" stroke="#f8fafc" stroke-width="18"/>
+            <rect x="74" y="75" width="292" height="200" rx="8" fill="#e0f2fe" stroke="#60a5fa" stroke-width="4"/>
+            <rect x="438" y="75" width="286" height="200" rx="8" fill="#dcfce7" stroke="#22c55e" stroke-width="4"/>
+            <rect x="74" y="345" width="292" height="178" rx="8" fill="#fef3c7" stroke="#f59e0b" stroke-width="4"/>
+            <rect x="438" y="345" width="286" height="178" rx="8" fill="#fee2e2" stroke="#ef4444" stroke-width="4"/>
+            <text x="220" y="180" text-anchor="middle" font-size="36" font-weight="800" fill="#1f2937">거실</text>
+            <text x="581" y="180" text-anchor="middle" font-size="36" font-weight="800" fill="#1f2937">주방</text>
+            <text x="220" y="445" text-anchor="middle" font-size="36" font-weight="800" fill="#1f2937">안방</text>
+            <text x="581" y="445" text-anchor="middle" font-size="36" font-weight="800" fill="#1f2937">작업방</text>
+        </svg>
+    `);
+});
+
+app.get('/robots/:id/map', (req, res) => {
+    const robotId = req.params.id;
+
+    res.status(200).json({
+        robot_id: robotId,
+        map_name: 'local test map',
+        map_url: 'http://localhost:3000/mock-map.svg',
+        metadata: {
+            resolution: 0.025,
+            origin: [-2.0, -1.0, 0.0],
+            width: 800,
+            height: 600
+        },
+        last_updated: new Date().toISOString()
+    });
+});
+
+app.get('/robots/:id/zones', (req, res) => {
+    const robotId = req.params.id;
+    const zones = zoneStore[robotId] || [];
+
+    res.status(200).json({
+        robot_id: robotId,
+        zones
+    });
+});
+
+app.get('/robots/:id/status', (req, res) => {
+    const robotId = req.params.id;
+
+    res.status(200).json({
+        robot_status: {
+            battery: 82,
+            is_charging: false,
+            power: 'OFF',
+            mode: 'AUTO',
+            current_zone: 'LIVING_ROOM'
+        },
+        air_quality: {
+            score: 75,
+            grade: 'NORMAL',
+            sensors: {
+                pm25: 25.4,
+                voc: 120,
+                temperature: 24.5,
+                humidity: 45.0
+            }
+        },
+        robot_id: robotId
+    });
+});
+
+app.put('/robots/:id/zones', (req, res) => {
+    const robotId = req.params.id;
+    const zones = req.body.zones;
+
+    if (!Array.isArray(zones)) {
+        return res.status(400).json({ success: false, error: 'zones must be an array' });
+    }
+
+    zoneStore[robotId] = zones;
+    console.log(`[${robotId}] zone 저장 완료:`, zones);
+
+    res.status(200).json({ success: true });
+});
+
+app.get('/robots/:id/air-quality/zones', (req, res) => {
+    const robotId = req.params.id;
+    const now = Date.now();
+    const zones = zoneStore[robotId] || [];
+    const statuses = ['GOOD', 'NORMAL', 'BAD'];
+
+    res.status(200).json({
+        robot_id: robotId,
+        update_interval_sec: 30,
+        zones: zones.map((zone, index) => ({
+            zone_id: zone.id,
+            pm25: index === 0 ? 8 : index === 1 ? 22 : 48,
+            voc: index === 0 ? 120 : index === 1 ? 310 : 720,
+            status: statuses[index % statuses.length],
+            measured_at: new Date(now - index * 90000).toISOString()
+        }))
+    });
+});
+
+app.post('/robots/:id/navigate', (req, res) => {
+    const robotId = req.params.id;
+    const command = req.body;
+
+    if (!command || !command.type) {
+        return res.status(400).json({ success: false, error: 'navigation type is required' });
+    }
+
+    console.log(`[${robotId}] 이동 명령 접수:`, command);
+    io.emit('status_change', 'RUNNING');
+    io.emit('robot_alert', {
+        robot_id: robotId,
+        event_type: 'NAVIGATE',
+        message: command.type === 'ZONE'
+            ? `구역 ${command.zone_id}으로 이동 명령을 접수했습니다.`
+            : `좌표 (${command.x}, ${command.y})로 이동 명령을 접수했습니다.`
+    });
+
+    res.status(202).json({ success: true, accepted: true });
+});
+
 server.listen(3000, () => {
     console.log('ARIA WebSocket 서버가 3000번 포트에서 실행 중입니다!');
 });
