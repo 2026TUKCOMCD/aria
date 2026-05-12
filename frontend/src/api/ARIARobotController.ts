@@ -69,6 +69,12 @@ export interface AuthVerifyResult {
   robot_name: string;
 }
 
+export interface RobotSchedulePayload {
+  wake_time: string;
+  sleep_time: string;
+  enabled: boolean;
+}
+
 const API_BASE_URL = import.meta.env.VITE_ARIA_API_URL || 'http://localhost:3000';
 const API_TOKEN = import.meta.env.VITE_API_SECRET_TOKEN;
 const DEFAULT_ID = import.meta.env.VITE_ROBOT_ID || '1';
@@ -149,6 +155,27 @@ export const verifyQrToken = async (token: string): Promise<AuthVerifyResult> =>
   const response = await axios.get(`${API_BASE_URL}/auth/verify`, {
     headers: createTokenHeaders(token),
   });
+  return response.data;
+};
+
+export const saveRobotSchedule = async (
+  robotId: string | undefined,
+  payload: RobotSchedulePayload
+) => {
+  const targetId = getRobotId(robotId);
+  const response = await axios.post(`${API_BASE_URL}/robots/${targetId}/schedule`, payload, {
+    headers: authHeaders,
+  });
+  return response.data;
+};
+
+export const resetRobotData = async (robotId: string | undefined, target: 'MAP' | 'AI') => {
+  const targetId = getRobotId(robotId);
+  const response = await axios.post(
+    `${API_BASE_URL}/robots/${targetId}/reset`,
+    { target },
+    { headers: authHeaders }
+  );
   return response.data;
 };
 
