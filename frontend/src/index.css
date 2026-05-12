@@ -1,7 +1,3 @@
-@import "tailwindcss"; /* v4에서는 이 한 줄로 시작합니다 */
-
-@config "../tailwind.config.ts";
-
-@layer base;
-@layer components;
-@layer utilities;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
