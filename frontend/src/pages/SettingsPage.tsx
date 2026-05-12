@@ -1,9 +1,13 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Navigation from '../components/Navigation';
 import CommonModal, { type ModalType } from '../components/CommonModal';
 import SleepTimeModal from '../components/SleepTimeModal';
+import useAuthStore from '../store/useAuthStore';
 
 const SettingsPage = () => {
+  const navigate = useNavigate();
+  const logout = useAuthStore((state) => state.logout);
   // 1. 공통 모달(초기화 등) 상태
   const [isCommonOpen, setIsCommonOpen] = useState(false);
   const [modalType, setModalType] = useState<ModalType>('RESET');
@@ -58,6 +62,11 @@ const SettingsPage = () => {
     setIsSleepOpen(false);
   };
 
+  const handleLogout = () => {
+    logout();
+    navigate('/auth', { replace: true });
+  };
+
   return (
     <div className="flex min-h-screen flex-col pb-[100px] font-sans">
       <header className="flex items-center justify-center pt-42 pb-16">
@@ -84,6 +93,13 @@ const SettingsPage = () => {
           className="flex h-[80px] w-full items-center justify-center rounded-[20px] bg-main-blue text-[24px] font-black text-white shadow-xl active:scale-95 transition-all"
         >
           AI 초기화
+        </button>
+
+        <button
+          onClick={handleLogout}
+          className="flex h-[70px] w-full items-center justify-center rounded-[20px] bg-white text-[22px] font-black text-main-blue shadow-xl active:scale-95 transition-all"
+        >
+          로그아웃
         </button>
       </section>
 

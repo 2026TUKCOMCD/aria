@@ -62,6 +62,13 @@ export interface RobotStatusSummary {
   };
 }
 
+export interface AuthVerifyResult {
+  valid: boolean;
+  robot_id: string;
+  user_name: string;
+  robot_name: string;
+}
+
 const API_BASE_URL = import.meta.env.VITE_ARIA_API_URL || 'http://localhost:3000';
 const API_TOKEN = import.meta.env.VITE_API_SECRET_TOKEN;
 const DEFAULT_ID = import.meta.env.VITE_ROBOT_ID || '1';
@@ -72,6 +79,12 @@ const authHeaders = {
   'Content-Type': 'application/json',
   ...(API_TOKEN ? { 'X-ARIA-SECRET': API_TOKEN } : {}),
 };
+
+const createTokenHeaders = (token: string) => ({
+  'Content-Type': 'application/json',
+  Authorization: `Bearer ${token}`,
+  'X-ARIA-QR-TOKEN': token,
+});
 
 export const sendRobotCommand = async (robotId: string, target: string, action: string) => {
   const targetId = getRobotId(robotId);
@@ -128,6 +141,13 @@ export const fetchRobotStatus = async (robotId?: string): Promise<RobotStatusSum
   const targetId = getRobotId(robotId);
   const response = await axios.get(`${API_BASE_URL}/robots/${targetId}/status`, {
     headers: authHeaders,
+  });
+  return response.data;
+};
+
+export const verifyQrToken = async (token: string): Promise<AuthVerifyResult> => {
+  const response = await axios.get(`${API_BASE_URL}/auth/verify`, {
+    headers: createTokenHeaders(token),
   });
   return response.data;
 };

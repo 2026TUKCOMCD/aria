@@ -33,6 +33,28 @@ const io = new Server(server, {
 // JSON 데이터를 읽을 수 있게 설정 (API Gateway 설정과 비슷함)
 app.use(express.json());
 
+app.get('/auth/verify', (req, res) => {
+    const authHeader = req.headers.authorization || '';
+    const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    const qrToken = req.headers['x-aria-qr-token'] || bearerToken;
+
+    if (!qrToken || qrToken === 'invalid') {
+        return res.status(200).json({
+            valid: false,
+            robot_id: null,
+            user_name: null,
+            robot_name: null
+        });
+    }
+
+    res.status(200).json({
+        valid: true,
+        robot_id: '1',
+        user_name: '민재',
+        robot_name: 'ARIA_01'
+    });
+});
+
 // ==========================================
 // 파트 A: 클라이언트(웹앱)와 연결되는 부분
 // ==========================================
