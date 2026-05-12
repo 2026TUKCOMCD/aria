@@ -178,6 +178,8 @@ const zoneStore = {
     ]
 };
 
+const scheduleStore = {};
+
 app.get('/mock-map.svg', (req, res) => {
     res.type('image/svg+xml').send(`
         <svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
@@ -246,6 +248,59 @@ app.get('/robots/:id/status', (req, res) => {
             }
         },
         robot_id: robotId
+    });
+});
+
+app.post('/robots/:id/schedule', (req, res) => {
+    const robotId = req.params.id;
+    const { wake_time, sleep_time, enabled } = req.body;
+    const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+    if (!timePattern.test(wake_time) || !timePattern.test(sleep_time)) {
+        return res.status(400).json({
+            success: false,
+            error: 'wake_time and sleep_time must be HH:mm format'
+        });
+    }
+
+    scheduleStore[robotId] = {
+        wake_time,
+        sleep_time,
+        enabled: Boolean(enabled),
+        updated_at: new Date().toISOString()
+    };
+
+    console.log(`[${robotId}] 스케줄 저장 완료:`, scheduleStore[robotId]);
+
+    res.status(200).json({
+        success: true,
+        message: '스케줄이 저장되었습니다.',
+        data: scheduleStore[robotId]
+    });
+});
+
+app.post('/robots/:id/reset', (req, res) => {
+    const robotId = req.params.id;
+    const { target } = req.body;
+
+    if (target !== 'MAP' && target !== 'AI') {
+        return res.status(400).json({
+            success: false,
+            error: 'target must be MAP or AI'
+        });
+    }
+
+    if (target === 'MAP') {
+        zoneStore[robotId] = [];
+    }
+
+    console.log(`[${robotId}] ${target} 초기화 명령 접수`);
+
+    res.status(200).json({
+        success: true,
+        message: target === 'MAP'
+            ? '맵 초기화 명령이 접수되었습니다.'
+            : 'AI 초기화 명령이 접수되었습니다.'
     });
 });
 
