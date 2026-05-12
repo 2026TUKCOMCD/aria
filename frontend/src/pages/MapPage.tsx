@@ -6,6 +6,8 @@ import NameInputModal from '../components/NameInputModal';
 import useRobotStore from '../store/useRobotStore';
 import type { AirQualityStatus, RobotZone, ZoneAirQuality, ZoneArea } from '../api/ARIARobotController';
 
+const AIR_QUALITY_STALE_MINUTES = 5;
+
 const formatUpdatedAt = (value?: string) => {
   if (!value) return '갱신 정보 없음';
 
@@ -19,8 +21,6 @@ const formatUpdatedAt = (value?: string) => {
     minute: '2-digit',
   });
 };
-
-const AIR_QUALITY_STALE_MINUTES = 5;
 
 const getEffectiveAirQualityStatus = (item?: ZoneAirQuality): AirQualityStatus => {
   if (!item || !item.measured_at) return 'STALE';
@@ -49,14 +49,15 @@ const MapPage = () => {
   const {
     mapData,
     zones,
+    zoneAirQuality,
+    airQualityUpdatedAt,
+    airQualityError,
+    robotPosition,
     isMapLoading,
     mapError,
     loadMapData,
     loadZones,
     loadZoneAirQuality,
-    zoneAirQuality,
-    airQualityUpdatedAt,
-    airQualityError,
     updateZone,
     saveZones,
   } = useRobotStore();
@@ -69,15 +70,15 @@ const MapPage = () => {
     [selectedZoneId, zones]
   );
 
+  const airQualityByZoneId = useMemo(() => {
+    return new Map(zoneAirQuality.map((item) => [item.zone_id, item]));
+  }, [zoneAirQuality]);
+
   useEffect(() => {
     loadMapData(robotId);
     loadZones(robotId);
     loadZoneAirQuality(robotId);
-  }, [loadMapData, loadZones, loadZoneAirQuality, robotId]);
-
-  const airQualityByZoneId = useMemo(() => {
-    return new Map(zoneAirQuality.map((item) => [item.zone_id, item]));
-  }, [zoneAirQuality]);
+  }, [loadMapData, loadZoneAirQuality, loadZones, robotId]);
 
   const worldSize = useMemo(() => {
     if (!metadata) return null;
@@ -140,11 +141,6 @@ const MapPage = () => {
     setSelectedZoneId(newZone.id);
   };
 
-  const handleZoneClick = (zone: RobotZone) => {
-    setSelectedZoneId(zone.id);
-    if (tab === 'AREA') return;
-  };
-
   const handleSaveZoneName = (newName: string) => {
     if (!selectedZone) return;
 
@@ -165,6 +161,8 @@ const MapPage = () => {
       setIsSaving(false);
     }
   };
+
+  const robotPoint = robotPosition ? worldToPercent(robotPosition) : null;
 
   return (
     <div className="flex min-h-screen flex-col pb-[100px] font-sans">
@@ -232,6 +230,7 @@ const MapPage = () => {
                   const point = worldToPercent(zone.center);
                   const areaStyle = areaToStyle(zone.area);
                   const isSelected = selectedZoneId === zone.id;
+                  const status = getEffectiveAirQualityStatus(airQualityByZoneId.get(zone.id));
 
                   return (
                     <button
@@ -239,7 +238,7 @@ const MapPage = () => {
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
-                        handleZoneClick(zone);
+                        setSelectedZoneId(zone.id);
                       }}
                       className="absolute z-10 -translate-x-1/2 -translate-y-1/2"
                       style={{ left: `${point.left}%`, top: `${point.top}%` }}
@@ -247,9 +246,7 @@ const MapPage = () => {
                       {areaStyle && (
                         <>
                           <span
-                            className={`pointer-events-none absolute border-2 ${
-                              airQualityStyle[getEffectiveAirQualityStatus(airQualityByZoneId.get(zone.id))].className
-                            }`}
+                            className={`pointer-events-none absolute border-2 ${airQualityStyle[status].className}`}
                             style={{
                               ...areaStyle,
                               left: `calc(${areaStyle.left} - ${point.left}%)`,
@@ -276,11 +273,29 @@ const MapPage = () => {
                         {zone.name}
                       </span>
                       <span className="mt-1 block rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-black text-gray-600 shadow">
-                        {airQualityStyle[getEffectiveAirQualityStatus(airQualityByZoneId.get(zone.id))].label}
+                        {airQualityStyle[status].label}
                       </span>
                     </button>
                   );
                 })}
+
+                {robotPoint && robotPosition && (
+                  <div
+                    className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-1/2"
+                    style={{ left: `${robotPoint.left}%`, top: `${robotPoint.top}%` }}
+                  >
+                    <div
+                      className="relative flex h-10 w-10 items-center justify-center rounded-full border-4 border-white bg-main-red shadow-xl"
+                      style={{ transform: `rotate(${robotPosition.theta}rad)` }}
+                    >
+                      <span className="absolute -top-3 h-4 w-2 rounded-full bg-main-red" />
+                      <span className="h-3 w-3 rounded-full bg-white" />
+                    </div>
+                    <div className="mt-1 rounded-full bg-white/95 px-2 py-0.5 text-center text-[10px] font-black text-main-red shadow">
+                      ARIA
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="mt-3 rounded-[16px] bg-white px-3 py-3 shadow-inner">
@@ -298,6 +313,11 @@ const MapPage = () => {
                     </div>
                   ))}
                 </div>
+                {robotPosition && (
+                  <p className="mt-2 text-center text-[11px] font-bold text-gray-500">
+                    로봇 위치: x {robotPosition.x.toFixed(2)}, y {robotPosition.y.toFixed(2)}
+                  </p>
+                )}
                 {airQualityError && (
                   <p className="mt-2 text-center text-[11px] font-bold text-main-red">{airQualityError}</p>
                 )}

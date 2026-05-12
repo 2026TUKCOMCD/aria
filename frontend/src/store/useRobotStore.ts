@@ -1,10 +1,10 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
-  fetchRobotStatus,
-  fetchZoneAirQuality,
   fetchRobotMap,
+  fetchRobotStatus,
   fetchRobotZones,
+  fetchZoneAirQuality,
   saveRobotZones,
   type RobotMap,
   type RobotStatusSummary,
@@ -15,6 +15,14 @@ import {
 interface Log {
   time: string;
   content: string;
+}
+
+export interface RobotPosition {
+  robot_id: string;
+  x: number;
+  y: number;
+  theta: number;
+  updated_at: string;
 }
 
 interface RobotState {
@@ -28,6 +36,7 @@ interface RobotState {
   };
   robotStatusSummary: RobotStatusSummary | null;
   robotStatusError: string | null;
+  robotPosition: RobotPosition | null;
   logs: Log[];
   mapData: RobotMap | null;
   zones: RobotZone[];
@@ -41,6 +50,7 @@ interface RobotState {
   setIsRunning: (status: boolean) => void;
   setAirQuality: (data: { pm25: number; voc: number }) => void;
   updateBattery: (val: number) => void;
+  setRobotPosition: (position: RobotPosition) => void;
   loadRobotStatus: (robotId?: string) => Promise<void>;
   addLog: (message: string) => void;
   clearLogs: () => void;
@@ -62,6 +72,7 @@ const useRobotStore = create<RobotState>()(
       airQuality: { pm25: 0, voc: 0 },
       robotStatusSummary: null,
       robotStatusError: null,
+      robotPosition: null,
       logs: [],
       mapData: null,
       zones: [],
@@ -75,6 +86,7 @@ const useRobotStore = create<RobotState>()(
       setIsRunning: (status) => set({ isRunning: status }),
       setAirQuality: (data) => set({ airQuality: data }),
       updateBattery: (val) => set({ battery: val }),
+      setRobotPosition: (position) => set({ robotPosition: position }),
 
       loadRobotStatus: async (robotId) => {
         try {
@@ -190,6 +202,7 @@ const useRobotStore = create<RobotState>()(
         battery: state.battery,
         airQuality: state.airQuality,
         robotStatusSummary: state.robotStatusSummary,
+        robotPosition: state.robotPosition,
         logs: state.logs,
         mapData: state.mapData,
         zones: state.zones,

@@ -109,6 +109,13 @@ export const sendRobotCommand = async (robotId: string, target: string, action: 
   }
 };
 
+export const verifyQrToken = async (token: string): Promise<AuthVerifyResult> => {
+  const response = await axios.get(`${API_BASE_URL}/auth/verify`, {
+    headers: createTokenHeaders(token),
+  });
+  return response.data;
+};
+
 export const fetchRobotMap = async (robotId?: string): Promise<RobotMap> => {
   const targetId = getRobotId(robotId);
   const response = await axios.get(`${API_BASE_URL}/robots/${targetId}/map`, {
@@ -147,13 +154,6 @@ export const fetchRobotStatus = async (robotId?: string): Promise<RobotStatusSum
   const targetId = getRobotId(robotId);
   const response = await axios.get(`${API_BASE_URL}/robots/${targetId}/status`, {
     headers: authHeaders,
-  });
-  return response.data;
-};
-
-export const verifyQrToken = async (token: string): Promise<AuthVerifyResult> => {
-  const response = await axios.get(`${API_BASE_URL}/auth/verify`, {
-    headers: createTokenHeaders(token),
   });
   return response.data;
 };

@@ -28,7 +28,7 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 const AppShell = () => {
   const location = useLocation();
   const isLoggedIn = useAuthStore((state) => state.isLoggedIn);
-  const { addLog, setIsRunning } = useRobotStore();
+  const { addLog, setIsRunning, setRobotPosition } = useRobotStore();
   const shouldShowNavigation = isLoggedIn && location.pathname !== '/auth';
 
   useEffect(() => {
@@ -58,6 +58,23 @@ const AppShell = () => {
         else if (newStatus === 'IDLE') setIsRunning(false);
       });
 
+      socket.on('robot_position', (position) => {
+        if (
+          position &&
+          typeof position.x === 'number' &&
+          typeof position.y === 'number' &&
+          typeof position.theta === 'number'
+        ) {
+          setRobotPosition({
+            robot_id: String(position.robot_id || ''),
+            x: position.x,
+            y: position.y,
+            theta: position.theta,
+            updated_at: position.updated_at || new Date().toISOString(),
+          });
+        }
+      });
+
       socket.on('connect_error', (err) => {
         console.error('소켓 연결 에러:', err.message);
       });
@@ -66,7 +83,7 @@ const AppShell = () => {
     return () => {
       socket?.disconnect();
     };
-  }, [addLog, isLoggedIn, setIsRunning]);
+  }, [addLog, isLoggedIn, setIsRunning, setRobotPosition]);
 
   return (
     <div className="min-h-screen bg-gray-200 flex justify-center items-center">
