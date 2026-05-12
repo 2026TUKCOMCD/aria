@@ -16,6 +16,7 @@ import Home from '../assets/home.svg?react';
 import Patrol from '../assets/patrol.svg?react';
 
 import EventLogModal from '../components/EventLogModal';
+import AIModeManualModal from '../components/AIModeManualModal';
 import { navigateRobot, sendRobotCommand } from '../api/ARIARobotController';
 import useRobotStore from '../store/useRobotStore';
 
@@ -61,6 +62,7 @@ const MainPage = () => {
   } = useRobotStore();
 
   const [isLogOpen, setIsLogOpen] = useState(false);
+  const [isManualOpen, setIsManualOpen] = useState(false);
   const [selectedZoneId, setSelectedZoneId] = useState<number | null>(null);
 
   const robotId = import.meta.env.VITE_ROBOT_ID || '1';
@@ -191,6 +193,14 @@ const MainPage = () => {
               {isAiMode && <CheckIcon className="h-5 w-5 fill-current" />}
             </button>
           </div>
+          {isAiMode && (
+            <button
+              onClick={() => setIsManualOpen(true)}
+              className="mt-3 h-[38px] w-full rounded-[16px] bg-white text-[14px] font-black text-main-blue shadow-inner transition-all active:scale-[0.98]"
+            >
+              AI 모드 안내 보기
+            </button>
+          )}
         </div>
       </section>
 
@@ -374,6 +384,10 @@ const MainPage = () => {
         isOpen={isLogOpen}
         onClose={() => setIsLogOpen(false)}
         logs={logs}
+      />
+      <AIModeManualModal
+        isOpen={isManualOpen}
+        onClose={() => setIsManualOpen(false)}
       />
     </div>
   );
