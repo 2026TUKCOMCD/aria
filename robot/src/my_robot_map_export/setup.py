@@ -20,6 +20,7 @@ setup(
     entry_points={
         'console_scripts': [
             'occupancy_to_png_json = my_robot_map_export.occupancy_to_png_json:main',
+            'upload_map = my_robot_map_export.upload_map:main',
         ],
     },
 )

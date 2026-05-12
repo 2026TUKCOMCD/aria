@@ -8,8 +8,14 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+<<<<<<< HEAD
 #include "Adafruit_VL53L1X.h"
 #include "mpu9250.h"
+=======
+#include "Adafruit_VL53L0X.h"
+#include "mpu9250.h"         
+#include "Adafruit_SGP40.h"
+>>>>>>> 11d1f6a4052fbd19a58cecfd155ef7a384317549
 #include "CytronMotorDriver.h"
 // #include "Adafruit_SGP40.h"
 // #include "DHT.h"
@@ -24,7 +30,12 @@
 #define I2C_SCL 22
 
 #define TOF1_XSHUT 26
+<<<<<<< HEAD
 #define TOF2_XSHUT 27   // 고장난 ToF는 비활성화
+=======
+#define TOF2_XSHUT 27
+#define TOF3_XSHUT 12  // GPIO12: 부팅 시 LOW 유지 필요 → 10K 풀다운 저항 필수
+>>>>>>> 11d1f6a4052fbd19a58cecfd155ef7a384317549
 
 #define MOTOR1_PWM 25
 #define MOTOR1_DIR 33
@@ -70,6 +81,7 @@ struct NavPacket {
     uint8_t id = 0;
     float tof1Distance;
     float tof2Distance;
+    float tof3Distance;
     float accelX;
     float accelY;
     float accelZ;
@@ -121,7 +133,11 @@ struct MotorCommandPacket {
 // [4] 전역 객체 및 변수
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+<<<<<<< HEAD
 Adafruit_VL53L1X tof1 = Adafruit_VL53L1X(TOF1_XSHUT, -1);
+=======
+Adafruit_VL53L0X tof1, tof2, tof3;
+>>>>>>> 11d1f6a4052fbd19a58cecfd155ef7a384317549
 MPU9250 imu(Wire, 0x68);
 // Adafruit_SGP40 sgp;
 // DHT dht(DHT_PIN, DHT_TYPE);
@@ -394,7 +410,67 @@ void setup() {
     Serial.printf("sizeof(AirPacket)=%d\n", (int)sizeof(AirPacket));
     Serial.printf("sizeof(OdomPacket)=%d\n", (int)sizeof(OdomPacket));
     Serial.printf("sizeof(MotorCommandPacket)=%d\n", (int)sizeof(MotorCommandPacket));
+<<<<<<< HEAD
 
+=======
+    
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // ToF 센서 (VL53L0X x3) — 하나씩 깨워서 I2C 주소 분리
+    //   tof1 → 0x30 / tof2 → 0x31 / tof3 → 0x29(기본)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    pinMode(TOF1_XSHUT, OUTPUT);
+    pinMode(TOF2_XSHUT, OUTPUT);
+    pinMode(TOF3_XSHUT, OUTPUT);
+    digitalWrite(TOF1_XSHUT, LOW);
+    digitalWrite(TOF2_XSHUT, LOW);
+    digitalWrite(TOF3_XSHUT, LOW);
+    delay(10);
+
+    // tof1: 0x29 → 0x30
+    digitalWrite(TOF1_XSHUT, HIGH);
+    delay(10);
+    if (!tof1.begin(0x29, false, &Wire)) {
+        Serial.println("✗ ToF1 연결 실패");
+    } else {
+        tof1.setAddress(0x30);
+        Serial.println("✓ ToF1 준비 (0x30)");
+    }
+
+    // tof2: 0x29 → 0x31
+    digitalWrite(TOF2_XSHUT, HIGH);
+    delay(10);
+    if (!tof2.begin(0x29, false, &Wire)) {
+        Serial.println("✗ ToF2 연결 실패");
+    } else {
+        tof2.setAddress(0x31);
+        Serial.println("✓ ToF2 준비 (0x31)");
+    }
+
+    // tof3: 0x29 유지
+    digitalWrite(TOF3_XSHUT, HIGH);
+    delay(10);
+    if (!tof3.begin(0x29, false, &Wire)) {
+        Serial.println("✗ ToF3 연결 실패");
+    } else {
+        Serial.println("✓ ToF3 준비 (0x29)");
+    }
+    
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 환경 센서
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    Serial.println("✓ PM 센서 준비 (UART)");
+    Serial.println("  ⚠ SET 핀을 GND에 연결!");
+    
+    if (!sgp.begin()) {
+        Serial.println("✗ SGP40 연결 실패");
+    } else {
+        Serial.println("✓ SGP40 준비 (VOC)");
+    }
+    
+    dht.begin();
+    Serial.println("✓ DHT22 준비 (온습도)");
+    
+>>>>>>> 11d1f6a4052fbd19a58cecfd155ef7a384317549
     Serial.println("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     Serial.println("  시스템 준비 완료!");
     Serial.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
@@ -446,10 +522,25 @@ void loop() {
     // NavPacket - 50ms
     if (now - lastNav >= 50) {
         NavPacket nPkt;
+<<<<<<< HEAD
 
         nPkt.tof1Distance = tof1DistanceValue;
         nPkt.tof2Distance = -1.0f;
 
+=======
+        
+        VL53L0X_RangingMeasurementData_t measure;
+
+        tof1.rangingTest(&measure, false);
+        if (measure.RangeStatus != 4) nPkt.tof1Distance = (float)measure.RangeMilliMeter;
+
+        tof2.rangingTest(&measure, false);
+        if (measure.RangeStatus != 4) nPkt.tof2Distance = (float)measure.RangeMilliMeter;
+
+        tof3.rangingTest(&measure, false);
+        if (measure.RangeStatus != 4) nPkt.tof3Distance = (float)measure.RangeMilliMeter;
+        
+>>>>>>> 11d1f6a4052fbd19a58cecfd155ef7a384317549
         if (imu.readSensor() > 0) {
             nPkt.accelX = imu.getAccelX_mss();
             nPkt.accelY = imu.getAccelY_mss();

@@ -4,6 +4,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 // PostgreSQL DB 통역기 불러오기
 const { Pool } = require('pg') 
+const cors = require('cors'); // [추가] 브라우저 차단(CORS) 해결을 위한 모듈
 
 //=====================================
 // DB 연결 셋업 (프라이빗 서브넷의 DB 정보 삽입)
@@ -13,11 +14,15 @@ const pool = new Pool({
     user: 'aria_web',
     password: 'raspberryraspberry',
     database: 'postgres',
-    port: 5432
+    port: 5432,
+    connectionTimeoutMillis: 2000, 
+    idleTimeoutMillis: 1000
 })
 
 //  2. 서버 뼈대 만들기
 const app = express();
+app.use(cors());
+app.use(express.json());
 const server = http.createServer(app);
 
 //  3. WebSocket(확성기) 설정 (CORS 허용: 누구나 접속 가능하게 끔)
@@ -46,49 +51,45 @@ io.on('connection', (socket) => {
 // ==========================================
 // Lambda가 POST 방식으로 /api/alert 주소로 데이터를 보내면 여기가 실행됩니다.
 app.post('/api/alert', async(req, res) => {
-    const alertData = req.body; // Lambda가 보낸 데이터 (예: { message: "먼지 나쁨" })
+    const alertData = req.body;
     console.log('Lambda에서 알림 도착:', alertData);
 
-    try{
-        //DB에 저장 로직
+    try {
+        /* [임시 주석 처리] 로컬 테스트 중에는 DB 접속이 안 되므로 주석 처리합니다.
         const query = `
-      INSERT INTO robot_event_logs (robot_id, event_type, message, created_at)
-      VALUES ($1, $2, $3, NOW())
-    `;
-    // 람다가 보내는 데이터 구조에 맞게 매핑 (없으면 기본값 처리)
-    const values = [
-      alertData.robot_id || 'aria-01', 
-      alertData.event_type || 'INFO', 
-      alertData.message || JSON.stringify(alertData)
-    ];
-    
-    await pool.query(query, values);
-    console.log('DB 저장 완료!');
-    // 현재 접속해 있는 "모든" 웹앱에게 'robot_alert'라는 이름으로 데이터를 확성기로 쏴줍니다!
-    io.emit('robot_alert', alertData);
+            INSERT INTO robot_event_logs (robot_id, event_type, message, created_at)
+            VALUES ($1, $2, $3, NOW())
+        `;
+        const values = [
+            alertData.robot_id || 'aria-01', 
+            alertData.event_type || 'INFO', 
+            alertData.message || JSON.stringify(alertData)
+        ];
+        await pool.query(query, values);
+        console.log('DB 저장 완료!');
+        */
 
-    // Lambda에게 200 OK 응답을 돌려줍니다.
-    res.status(200).json({ success: true, message: '클라이언트들에게 알림 전송 완료!' });
+        // [핵심] DB 저장이 실패하든 말든, 일단 웹으로 데이터를 쏩니다!
+        console.log('웹으로 실시간 알림 전송 중...');
+        io.emit('robot_alert', alertData); 
+
+        res.status(200).json({ success: true, message: '클라이언트들에게 알림 전송 완료!' });
     } catch (error) {
-        console.error('DB 저장 중 에러 발생:', error);
-        // DB 저장에 실패하더라도 람다가 재시도하지 않도록 일단 500 에러를 반환합니다.
-        res.status(500).json({ success: false, error: 'DB 저장 실패' });
+        console.error('에러 발생:', error);
+        // 에러가 나더라도 일단 웹에는 띄워보고 싶다면 위 io.emit을 catch 밖으로 빼도 됩니다.
+        res.status(500).json({ success: false, error: '처리 실패' });
     }
-    
 });
 
 // ==========================================
-// 파트 C: 프론트엔드 초기 화면용 과거 로그 조회 API (GET)
+// 파트 C: 과거 로그 조회 API (GET) - DB 에러 방어 버전
 // ==========================================
-// 프론트엔드가 GET 방식으로 /api/events 주소를 찌르면 실행됩니다.
 app.get('/api/events', async (req, res) => {
-    try {
-        console.log('프론트엔드에서 과거 로그 조회 요청 도착!');
-        
-        // 프론트에서 특정 로봇 ID를 요구할 경우를 대비 (기본값: aria-01)
-        const robotId = req.query.robot_id || 'aria_robot01';
+    const robotId = req.query.robot_id || 'aria_robot01';
+    console.log(`프론트엔드에서 [${robotId}] 과거 로그 조회 요청 도착!`);
 
-        // 타임라인 방식: 해당 로봇의 전체 로그 중 최신 7개 가져오기
+    try {
+        // 1. DB 쿼리 시도
         const query = `
             SELECT log_id, event_type, message, created_at 
             FROM robot_event_logs 
@@ -97,24 +98,189 @@ app.get('/api/events', async (req, res) => {
             LIMIT 7
         `;
 
-        // DB에 쿼리 날리기 ($1 자리에 robotId가 쏙 들어갑니다)
+        // DB 연결이 안 되는 환경(로컬)에서는 여기서 에러가 발생하여 catch문으로 넘어갑니다.
         const { rows } = await pool.query(query, [robotId]);
 
-        // 프론트엔드에게 성공 메시지와 함께 데이터를 JSON으로 던져줌
         res.status(200).json({
             success: true,
             data: rows
         });
 
     } catch (error) {
-        console.error('로그 조회 중 에러 발생:', error);
-        res.status(500).json({ success: false, error: 'DB 조회 실패' });
+        // 2. DB 연결 실패 시 실행되는 구역 (로컬 테스트용)
+        console.error('로그 조회 중 DB 연결 실패 (로컬 테스트 모드):', error.message);
+        
+        // 실제 DB 대신 프론트엔드에 전달할 가짜 데이터입니다.
+        const dummyRows = [
+            { log_id: 999, event_type: 'INFO', message: '현재 DB 연결이 불가능하여 테스트 데이터를 표시합니다.', created_at: new Date() },
+            { log_id: 1, event_type: 'CLEANING', message: '요리 오염 감지 (과거 기록)', created_at: new Date(Date.now() - 3600000) },
+            { log_id: 2, event_type: 'ACTIVITY', message: '활동 감지 (과거 기록)', created_at: new Date(Date.now() - 7200000) }
+        ];
+
+        // 상태 코드 200과 함께 가짜 데이터를 보내서 리액트가 멈추지 않게 합니다.
+        res.status(200).json({
+            success: true,
+            data: dummyRows,
+            isDummy: true
+        });
     }
 });
 
 // ==========================================
 //  서버 켜기 (포트 3000번)
 // ==========================================
+// ==========================================
+// Part D: Map and zone APIs for the web app
+// ==========================================
+// Temporary in-memory data. Replace this with DB/S3 queries when the backend is ready.
+const zoneStore = {
+    '1': [
+        {
+            id: 1,
+            name: '거실',
+            center: { x: 1.5, y: 1.2 },
+            area: { x_min: -1.5, y_min: -0.6, x_max: 4.3, y_max: 3.0 }
+        },
+        {
+            id: 2,
+            name: '주방',
+            center: { x: 6.5, y: 1.4 },
+            area: { x_min: 4.5, y_min: -0.4, x_max: 8.7, y_max: 3.1 }
+        },
+        {
+            id: 3,
+            name: '안방',
+            center: { x: 2.4, y: 5.6 },
+            area: { x_min: -1.2, y_min: 3.4, x_max: 5.4, y_max: 7.6 }
+        }
+    ]
+};
+
+app.get('/mock-map.svg', (req, res) => {
+    res.type('image/svg+xml').send(`
+        <svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+            <rect width="800" height="600" fill="#f8fafc"/>
+            <rect x="40" y="40" width="720" height="520" rx="12" fill="#ffffff" stroke="#1f2937" stroke-width="18"/>
+            <path d="M400 40v520M40 310h720" stroke="#1f2937" stroke-width="12"/>
+            <path d="M400 310h120M400 190h90M270 310v120" stroke="#f8fafc" stroke-width="18"/>
+            <rect x="74" y="75" width="292" height="200" rx="8" fill="#e0f2fe" stroke="#60a5fa" stroke-width="4"/>
+            <rect x="438" y="75" width="286" height="200" rx="8" fill="#dcfce7" stroke="#22c55e" stroke-width="4"/>
+            <rect x="74" y="345" width="292" height="178" rx="8" fill="#fef3c7" stroke="#f59e0b" stroke-width="4"/>
+            <rect x="438" y="345" width="286" height="178" rx="8" fill="#fee2e2" stroke="#ef4444" stroke-width="4"/>
+            <text x="220" y="180" text-anchor="middle" font-size="36" font-weight="800" fill="#1f2937">거실</text>
+            <text x="581" y="180" text-anchor="middle" font-size="36" font-weight="800" fill="#1f2937">주방</text>
+            <text x="220" y="445" text-anchor="middle" font-size="36" font-weight="800" fill="#1f2937">안방</text>
+            <text x="581" y="445" text-anchor="middle" font-size="36" font-weight="800" fill="#1f2937">작업방</text>
+        </svg>
+    `);
+});
+
+app.get('/robots/:id/map', (req, res) => {
+    const robotId = req.params.id;
+
+    res.status(200).json({
+        robot_id: robotId,
+        map_name: 'local test map',
+        map_url: 'http://localhost:3000/mock-map.svg',
+        metadata: {
+            resolution: 0.025,
+            origin: [-2.0, -1.0, 0.0],
+            width: 800,
+            height: 600
+        },
+        last_updated: new Date().toISOString()
+    });
+});
+
+app.get('/robots/:id/zones', (req, res) => {
+    const robotId = req.params.id;
+    const zones = zoneStore[robotId] || [];
+
+    res.status(200).json({
+        robot_id: robotId,
+        zones
+    });
+});
+
+app.get('/robots/:id/status', (req, res) => {
+    const robotId = req.params.id;
+
+    res.status(200).json({
+        robot_status: {
+            battery: 82,
+            is_charging: false,
+            power: 'OFF',
+            mode: 'AUTO',
+            current_zone: 'LIVING_ROOM'
+        },
+        air_quality: {
+            score: 75,
+            grade: 'NORMAL',
+            sensors: {
+                pm25: 25.4,
+                voc: 120,
+                temperature: 24.5,
+                humidity: 45.0
+            }
+        },
+        robot_id: robotId
+    });
+});
+
+app.put('/robots/:id/zones', (req, res) => {
+    const robotId = req.params.id;
+    const zones = req.body.zones;
+
+    if (!Array.isArray(zones)) {
+        return res.status(400).json({ success: false, error: 'zones must be an array' });
+    }
+
+    zoneStore[robotId] = zones;
+    console.log(`[${robotId}] zone 저장 완료:`, zones);
+
+    res.status(200).json({ success: true });
+});
+
+app.get('/robots/:id/air-quality/zones', (req, res) => {
+    const robotId = req.params.id;
+    const now = Date.now();
+    const zones = zoneStore[robotId] || [];
+    const statuses = ['GOOD', 'NORMAL', 'BAD'];
+
+    res.status(200).json({
+        robot_id: robotId,
+        update_interval_sec: 30,
+        zones: zones.map((zone, index) => ({
+            zone_id: zone.id,
+            pm25: index === 0 ? 8 : index === 1 ? 22 : 48,
+            voc: index === 0 ? 120 : index === 1 ? 310 : 720,
+            status: statuses[index % statuses.length],
+            measured_at: new Date(now - index * 90000).toISOString()
+        }))
+    });
+});
+
+app.post('/robots/:id/navigate', (req, res) => {
+    const robotId = req.params.id;
+    const command = req.body;
+
+    if (!command || !command.type) {
+        return res.status(400).json({ success: false, error: 'navigation type is required' });
+    }
+
+    console.log(`[${robotId}] 이동 명령 접수:`, command);
+    io.emit('status_change', 'RUNNING');
+    io.emit('robot_alert', {
+        robot_id: robotId,
+        event_type: 'NAVIGATE',
+        message: command.type === 'ZONE'
+            ? `구역 ${command.zone_id}으로 이동 명령을 접수했습니다.`
+            : `좌표 (${command.x}, ${command.y})로 이동 명령을 접수했습니다.`
+    });
+
+    res.status(202).json({ success: true, accepted: true });
+});
+
 server.listen(3000, () => {
     console.log('ARIA WebSocket 서버가 3000번 포트에서 실행 중입니다!');
 });

@@ -1,0 +1,7 @@
+image: aria_map_door.pgm
+mode: trinary
+resolution: 0.02
+origin: [-1.94, -0.567, 0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.25

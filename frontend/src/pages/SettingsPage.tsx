@@ -11,24 +11,51 @@ const SettingsPage = () => {
   // 2. 수면 시간 설정 모달 상태
   const [isSleepOpen, setIsSleepOpen] = useState(false);
 
-  // 초기화 버튼 클릭 핸들러
+  // 환경 변수 불러오기
+  const API_BASE_URL = import.meta.env.VITE_ARIA_API_URL;
+  const ROBOT_ID = import.meta.env.VITE_ROBOT_ID || "1";
+  const API_TOKEN = import.meta.env.VITE_API_SECRET_TOKEN;
+
+  // --- [추가] 초기화 버튼 클릭 시 모달을 여는 함수 ---
   const handleOpenReset = (type: ModalType) => {
     setModalType(type);
     setIsCommonOpen(true);
   };
 
-  // 모달 확인(예) 버튼 클릭 시 실행될 로직
-  const handleConfirmReset = () => {
-    console.log(`${modalType} 처리됨`);
-    setIsCommonOpen(false);
-    // 여기에 실제 데이터 초기화 로직 추가
+  // --- [통합] 초기화 API 호출 핸들러 ---
+  const handleConfirmReset = async () => {
+    // RESET -> MAP 데이터 초기화, AI_RESET -> AI 데이터 초기화
+    const target = modalType === 'RESET' ? 'MAP' : 'AI';
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/robots/${ROBOT_ID}/reset`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-ARIA-SECRET': API_TOKEN,
+        },
+        body: JSON.stringify({ target: target }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        alert(data.message || "초기화 명령이 성공적으로 전송되었습니다.");
+      } else {
+        throw new Error("초기화 요청 실패");
+      }
+    } catch (error) {
+      console.error("Reset Error:", error);
+      alert("초기화 중 오류가 발생했습니다.");
+    } finally {
+      setIsCommonOpen(false); // 작업 완료 후 모달 닫기
+    }
   };
 
-  // 수면 시간 저장 핸들러
+  // 수면 시간 저장 핸들러 (UI 업데이트용)
   const handleSaveSleepTime = (sleep: string, wake: string) => {
-    console.log(`취침: ${sleep}, 기상: ${wake}`);
+    console.log(`설정된 시간 - 취침: ${sleep}, 기상: ${wake}`);
+    // SleepTimeModal 내부에서 이미 API 호출을 하므로 여기서는 UI 처리만 합니다.
     setIsSleepOpen(false);
-    // 여기에 API 저장 로직 추가
   };
 
   return (
