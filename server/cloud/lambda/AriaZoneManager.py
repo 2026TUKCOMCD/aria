@@ -46,7 +46,8 @@ def lambda_handler(event, context):
                     "id": row[0],
                     "name": row[1],
                     "center": row[2],  # JSONB라 바로 딕셔너리로 변환됨
-                    "area": row[3]
+                    "area": row[3],
+                    "polygon": row[4]
                 })
 
             response_body = {
@@ -68,23 +69,24 @@ def lambda_handler(event, context):
             new_zones = body.get('zones', [])
 
             # 2-1. 이번에 프론트엔드가 보내준 방 이름들만 리스트로 get
-            new_zone_names = [zone.get('name') for zone in new_zones]
+            new_zone_ids = [str(zone.get('id')) for zone in new_zones if zone.get('id') is not None]
 
             # 2-2. 영리한 삭제: 프론트엔드가 안 보낸 방(즉, 앱에서 삭제한 방)만 골라서 delete
-            if new_zone_names:
-                format_strings = ','.join(['%s'] * len(new_zone_names))
-                delete_query = f"DELETE FROM robot_zones WHERE robot_id = %s AND zone_name NOT IN ({format_strings})"
-                cursor.execute(delete_query, [robot_id] + new_zone_names)
+            if new_zone_ids:
+                format_strings = ','.join(['%s'] * len(new_zone_ids))
+                delete_query = f"DELETE FROM robot_zones WHERE robot_id = %s AND zone_id NOT IN ({format_strings})"
+                cursor.execute(delete_query, [robot_id] + new_zone_ids)
             else:
                 # 빈 배열을 보냈다면 방을 싹 다 지웠다는 뜻
                 cursor.execute("DELETE FROM robot_zones WHERE robot_id = %s", (robot_id,))
 
             # 2-3. UPSERT 쿼리 (PostgreSQL의 필살기 ON CONFLICT 사용)
             upsert_query = """
-                INSERT INTO robot_zones (robot_id, zone_name, center_data, area_data)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (robot_id, zone_name) 
+                INSERT INTO robot_zones (robot_id, zone_id, zone_name, center_data, area_data, polygon_data)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (robot_id, zone_id) 
                 DO UPDATE SET 
+                    zone_name = EXCLUDED.zone_name,
                     center_data = EXCLUDED.center_data,
                     area_data = EXCLUDED.area_data
             """
