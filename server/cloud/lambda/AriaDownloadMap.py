@@ -63,7 +63,26 @@ def lambda_handler(event, context):
                 'body': json.dumps({'message': f'No maps found for robot {robot_id}'})
             }
 
-        # 4. 이슈 #132 조건에 맞게 응답 JSON 조립
+        # 4. 해당 로봇(robot_id)에 연결된 Zone 데이터 조회
+        zone_query = """
+            SELECT zone_id, zone_name, center_data, area_data, polygon_data
+            FROM robot_zones
+            WHERE robot_id = %s;
+        """
+        cursor.execute(zone_query, (robot_id,))
+        zones_result = cursor.fetchall()
+
+        zones_list = []
+        for z in zones_result:
+            zones_list.append({
+                "id": z[0],
+                "name": z[1],
+                "center": z[2],
+                "area": z[3],
+                "polygon": z[4]
+            })
+        
+        # 5. 이슈 #132 조건에 맞게 응답 JSON 조립
         response_body = {
             "robot_id": robot_id,
             "map_name": result[7],
@@ -73,10 +92,11 @@ def lambda_handler(event, context):
                 "width": result[2],
                 "height": result[3],
                 "origin": [result[4], result[5], result[6]]
-            }
+            },
+            "zones": zones_list
         }
 
-        # 5. 성공 응답 (CORS 헤더 포함 - 웹앱에서 에러 안 나게)
+        # 6. 성공 응답 (CORS 헤더 포함 - 웹앱에서 에러 안 나게)
         return {
             'statusCode': 200,
             'headers': {
