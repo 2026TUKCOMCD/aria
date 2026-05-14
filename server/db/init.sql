@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS robot_status_log (
     power_status    VARCHAR(20),       -- ON, OFF, SLEEP
     operation_mode  VARCHAR(20),       -- AUTO, MANUAL, TURBO
     current_zone    VARCHAR(50),       -- 거실, 주방 등
+    movement_status VARCHAR(20),
     
     -- [Air Quality]
     air_score       INTEGER,           -- 종합 점수
@@ -115,3 +116,26 @@ CREATE TABLE robot_zones (
 
 -- 2. 로봇 ID와 방 이름의 조합을 '고유값'으로 묶기 
 ALTER TABLE robot_zones ADD CONSTRAINT unique_robot_zone_name UNIQUE (robot_id, zone_name);
+
+-- =========================================================
+-- [PART 6] 이벤트 로그 테이블 - issue #128
+-- =========================================================
+
+CREATE TABLE robot_event_logs (
+    log_id SERIAL PRIMARY KEY,
+    robot_id VARCHAR(50) NOT NULL,
+    event_type VARCHAR(20) NOT NULL,
+    message TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+  
+-- =========================================================
+-- [PART 7] 기상/취침 스케줄 관리를 위한 table- 이슈#184
+-- =========================================================
+
+CREATE TABLE IF NOT EXISTS robot_schedules (
+    robot_id VARCHAR(50) PRIMARY KEY,
+    wake_time VARCHAR(5),
+    sleep_time VARCHAR(5),
+    is_enabled BOOLEAN,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
