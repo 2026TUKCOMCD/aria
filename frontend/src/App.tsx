@@ -1,6 +1,5 @@
 import { useEffect } from 'react';
 import { BrowserRouter as Router, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { io, type Socket } from 'socket.io-client';
 
 import MainPage from './pages/MainPage';
 import AuthPage from './pages/AuthPage';
@@ -12,7 +11,10 @@ import Navigation from './components/Navigation';
 import useAuthStore from './store/useAuthStore';
 import useRobotStore from './store/useRobotStore';
 
-const SOCKET_SERVER_URL = import.meta.env.VITE_ARIA_API_URL || 'http://localhost:3000';
+const EVENT_STREAM_URL =
+  import.meta.env.VITE_ARIA_SOCKET_URL ||
+  import.meta.env.VITE_ARIA_API_URL ||
+  'http://localhost:3000';
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const isLoggedIn = useAuthStore((state) => state.isLoggedIn);
@@ -28,37 +30,46 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 const AppShell = () => {
   const location = useLocation();
   const isLoggedIn = useAuthStore((state) => state.isLoggedIn);
+  const authRobotId = useAuthStore((state) => state.robotId);
+  const robotId = authRobotId || import.meta.env.VITE_ROBOT_ID || '1';
   const { addLog, setIsRunning, setRobotPosition } = useRobotStore();
   const shouldShowNavigation = isLoggedIn && location.pathname !== '/auth';
 
   useEffect(() => {
-    let socket: Socket | null = null;
+    if (!isLoggedIn) return;
 
-    if (isLoggedIn) {
-      socket = io(SOCKET_SERVER_URL, {
-        transports: ['websocket'],
-        reconnectionAttempts: 5,
-      });
+    const eventSource = new EventSource(`${EVENT_STREAM_URL}/robots/${robotId}/events/stream`);
 
-      socket.on('connect', () => {
-        console.log('WebSocket 서버에 연결되었습니다. ID:', socket?.id);
-      });
-
-      socket.on('robot_alert', (data) => {
-        const logMessage = data.message || '알 수 없는 이벤트 발생';
+    const handleAlertEvent = (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data);
+        const logMessage = data.message || '이벤트가 발생했습니다.';
         addLog(logMessage);
 
-        if (data.event_type === 'EMERGENCY') {
+        if (data.type === 'EMERGENCY' || data.event_type === 'EMERGENCY') {
           alert(`[긴급] ${logMessage}`);
         }
-      });
+      } catch (error) {
+        console.error('SSE 이벤트 파싱 실패:', error);
+      }
+    };
 
-      socket.on('status_change', (newStatus) => {
-        if (newStatus === 'RUNNING') setIsRunning(true);
-        else if (newStatus === 'IDLE') setIsRunning(false);
-      });
+    eventSource.addEventListener('clean_status', handleAlertEvent);
+    eventSource.addEventListener('robot_alert', handleAlertEvent);
 
-      socket.on('robot_position', (position) => {
+    eventSource.addEventListener('status_change', (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.status === 'RUNNING' || data.type === 'RUNNING') setIsRunning(true);
+        if (data.status === 'IDLE' || data.type === 'IDLE') setIsRunning(false);
+      } catch (error) {
+        console.error('SSE 상태 이벤트 파싱 실패:', error);
+      }
+    });
+
+    eventSource.addEventListener('robot_position', (event) => {
+      try {
+        const position = JSON.parse(event.data);
         if (
           position &&
           typeof position.x === 'number' &&
@@ -66,24 +77,26 @@ const AppShell = () => {
           typeof position.theta === 'number'
         ) {
           setRobotPosition({
-            robot_id: String(position.robot_id || ''),
+            robot_id: String(position.robot_id || robotId),
             x: position.x,
             y: position.y,
             theta: position.theta,
             updated_at: position.updated_at || new Date().toISOString(),
           });
         }
-      });
+      } catch (error) {
+        console.error('SSE 위치 이벤트 파싱 실패:', error);
+      }
+    });
 
-      socket.on('connect_error', (err) => {
-        console.error('소켓 연결 에러:', err.message);
-      });
-    }
+    eventSource.onerror = () => {
+      console.error('SSE 연결 오류');
+    };
 
     return () => {
-      socket?.disconnect();
+      eventSource.close();
     };
-  }, [addLog, isLoggedIn, setIsRunning, setRobotPosition]);
+  }, [addLog, isLoggedIn, robotId, setIsRunning, setRobotPosition]);
 
   return (
     <div className="min-h-screen bg-gray-200 flex justify-center items-center">

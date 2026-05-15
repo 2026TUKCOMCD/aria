@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState, type MouseEvent } from 'react';
+import { Fragment, useEffect, useMemo, useState, type MouseEvent } from 'react';
 import CheckIcon from '../assets/check.svg?react';
 import MapIcon from '../assets/map.svg?react';
 import Navigation from '../components/Navigation';
 import NameInputModal from '../components/NameInputModal';
 import useRobotStore from '../store/useRobotStore';
-import type { AirQualityStatus, RobotZone, ZoneAirQuality, ZoneArea } from '../api/ARIARobotController';
+import useAuthStore from '../store/useAuthStore';
+import type { AirQualityStatus, RobotZone, ZoneAirQuality, ZoneArea, ZonePoint } from '../api/ARIARobotController';
 
 const AIR_QUALITY_STALE_MINUTES = 5;
 
@@ -59,10 +60,12 @@ const MapPage = () => {
     loadZones,
     loadZoneAirQuality,
     updateZone,
+    removeZone,
     saveZones,
   } = useRobotStore();
 
-  const robotId = import.meta.env.VITE_ROBOT_ID || '1';
+  const authRobotId = useAuthStore((state) => state.robotId);
+  const robotId = authRobotId || import.meta.env.VITE_ROBOT_ID || '1';
   const metadata = mapData?.metadata;
 
   const selectedZone = useMemo(
@@ -116,6 +119,17 @@ const MapPage = () => {
     };
   };
 
+  const polygonToPoints = (polygon?: ZonePoint[]) => {
+    if (!polygon || polygon.length < 3 || !metadata || !worldSize) return '';
+
+    return polygon
+      .map((point) => {
+        const position = worldToPercent(point);
+        return `${position.left},${position.top}`;
+      })
+      .join(' ');
+  };
+
   const handleMapClick = (event: MouseEvent<HTMLDivElement>) => {
     if (tab !== 'LOCATION' || !metadata || !worldSize) return;
 
@@ -145,6 +159,16 @@ const MapPage = () => {
     if (!selectedZone) return;
 
     updateZone({ ...selectedZone, name: newName });
+    setSelectedZoneId(null);
+  };
+
+  const handleDeleteSelectedZone = () => {
+    if (!selectedZone) return;
+
+    const shouldDelete = window.confirm(`"${selectedZone.name}" 구역을 삭제할까요?`);
+    if (!shouldDelete) return;
+
+    removeZone(selectedZone.id);
     setSelectedZoneId(null);
   };
 
@@ -229,53 +253,74 @@ const MapPage = () => {
                 {zones.map((zone) => {
                   const point = worldToPercent(zone.center);
                   const areaStyle = areaToStyle(zone.area);
+                  const polygonPoints = polygonToPoints(zone.polygon);
+                  const hasPolygon = Boolean(polygonPoints);
                   const isSelected = selectedZoneId === zone.id;
                   const status = getEffectiveAirQualityStatus(airQualityByZoneId.get(zone.id));
 
                   return (
-                    <button
-                      key={zone.id}
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setSelectedZoneId(zone.id);
-                      }}
-                      className="absolute z-10 -translate-x-1/2 -translate-y-1/2"
-                      style={{ left: `${point.left}%`, top: `${point.top}%` }}
-                    >
-                      {areaStyle && (
-                        <>
-                          <span
-                            className={`pointer-events-none absolute border-2 ${airQualityStyle[status].className}`}
-                            style={{
-                              ...areaStyle,
-                              left: `calc(${areaStyle.left} - ${point.left}%)`,
-                              top: `calc(${areaStyle.top} - ${point.top}%)`,
-                            }}
+                    <Fragment key={zone.id}>
+                      {hasPolygon && (
+                        <svg
+                          className="pointer-events-none absolute inset-0 h-full w-full"
+                          viewBox="0 0 100 100"
+                          preserveAspectRatio="none"
+                        >
+                          <polygon
+                            points={polygonPoints}
+                            className={`${airQualityStyle[status].className} ${isSelected ? 'stroke-main-red' : ''}`}
+                            fill="currentColor"
+                            fillOpacity="0.18"
+                            stroke={isSelected ? 'currentColor' : zone.color || 'currentColor'}
+                            strokeWidth="0.6"
+                            vectorEffect="non-scaling-stroke"
                           />
-                          <span
-                            className={`pointer-events-none absolute border-2 ${
-                              isSelected ? 'border-main-red' : 'border-main-blue/60'
-                            }`}
-                            style={{
-                              ...areaStyle,
-                              left: `calc(${areaStyle.left} - ${point.left}%)`,
-                              top: `calc(${areaStyle.top} - ${point.top}%)`,
-                            }}
-                          />
-                        </>
+                        </svg>
                       )}
-                      <span
-                        className={`flex min-h-8 min-w-8 items-center justify-center rounded-full px-2 text-[12px] font-black text-white shadow-lg ${
-                          isSelected ? 'bg-main-red' : 'bg-main-blue'
-                        }`}
+
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setSelectedZoneId(zone.id);
+                        }}
+                        className="absolute z-10 -translate-x-1/2 -translate-y-1/2"
+                        style={{ left: `${point.left}%`, top: `${point.top}%` }}
                       >
-                        {zone.name}
-                      </span>
-                      <span className="mt-1 block rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-black text-gray-600 shadow">
-                        {airQualityStyle[status].label}
-                      </span>
-                    </button>
+                        {!hasPolygon && areaStyle && (
+                          <>
+                            <span
+                              className={`pointer-events-none absolute border-2 ${airQualityStyle[status].className}`}
+                              style={{
+                                ...areaStyle,
+                                left: `calc(${areaStyle.left} - ${point.left}%)`,
+                                top: `calc(${areaStyle.top} - ${point.top}%)`,
+                              }}
+                            />
+                            <span
+                              className={`pointer-events-none absolute border-2 ${
+                                isSelected ? 'border-main-red' : 'border-main-blue/60'
+                              }`}
+                              style={{
+                                ...areaStyle,
+                                left: `calc(${areaStyle.left} - ${point.left}%)`,
+                                top: `calc(${areaStyle.top} - ${point.top}%)`,
+                              }}
+                            />
+                          </>
+                        )}
+                        <span
+                          className={`flex min-h-8 min-w-8 items-center justify-center rounded-full px-2 text-[12px] font-black text-white shadow-lg ${
+                            isSelected ? 'bg-main-red' : 'bg-main-blue'
+                          }`}
+                        >
+                          {zone.name}
+                        </span>
+                        <span className="mt-1 block rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-black text-gray-600 shadow">
+                          {airQualityStyle[status].label}
+                        </span>
+                      </button>
+                    </Fragment>
                   );
                 })}
 
@@ -359,6 +404,17 @@ const MapPage = () => {
           {isSaving ? '저장 중' : '현재 상태 저장'}
         </button>
       </section>
+
+      {selectedZone && (
+        <section className="mb-3 px-6">
+          <button
+            onClick={handleDeleteSelectedZone}
+            className="flex h-[52px] w-full items-center justify-center rounded-[18px] border-2 border-main-red bg-white text-[16px] font-black text-main-red shadow-md transition-all active:scale-95"
+          >
+            선택 구역 삭제
+          </button>
+        </section>
+      )}
 
       <NameInputModal
         isOpen={tab === 'AREA' && Boolean(selectedZone)}

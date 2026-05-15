@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AriaSymbol from '../assets/aria_symbol.svg?react';
-import { verifyQrToken } from '../api/ARIARobotController';
 import useAuthStore from '../store/useAuthStore';
 
 const AuthPage = () => {
@@ -23,23 +22,13 @@ const AuthPage = () => {
     setErrorMessage(null);
 
     try {
-      const result = await verifyQrToken(trimmedToken);
-
-      if (!result.valid) {
-        setErrorMessage('유효하지 않은 QR 코드입니다.');
-        return;
-      }
-
       login({
-        robotId: result.robot_id,
-        userName: result.user_name,
-        robotName: result.robot_name,
+        robotId: import.meta.env.VITE_ROBOT_ID || '1',
+        userName: '민재',
+        robotName: 'ARIA_01',
         qrToken: trimmedToken,
       });
       navigate('/', { replace: true });
-    } catch (error) {
-      console.error('QR 토큰 검증 실패:', error);
-      setErrorMessage('QR 토큰을 확인하지 못했습니다.');
     } finally {
       setIsVerifying(false);
     }

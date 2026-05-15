@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
+  fetchRobotEvents,
   fetchRobotMap,
   fetchRobotStatus,
   fetchRobotZones,
@@ -59,8 +60,16 @@ interface RobotState {
   loadZones: (robotId?: string) => Promise<void>;
   loadZoneAirQuality: (robotId?: string) => Promise<void>;
   updateZone: (zone: RobotZone) => void;
+  removeZone: (zoneId: number) => void;
   saveZones: (robotId?: string) => Promise<void>;
 }
+
+const formatLogTime = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '--:--';
+
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+};
 
 const useRobotStore = create<RobotState>()(
   persist(
@@ -118,20 +127,13 @@ const useRobotStore = create<RobotState>()(
 
       fetchLogs: async (robotId) => {
         try {
-          const response = await fetch(`http://localhost:3000/api/events?robot_id=${robotId}`);
-          const result = await response.json();
+          const events = await fetchRobotEvents(robotId);
+          const formattedLogs = events.map((row) => ({
+            time: formatLogTime(row.created_at),
+            content: row.message,
+          }));
 
-          if (result.success && result.data) {
-            const formattedLogs = result.data.map((row: any) => {
-              const date = new Date(row.created_at);
-              return {
-                time: `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`,
-                content: row.message,
-              };
-            });
-
-            set({ logs: formattedLogs });
-          }
+          set({ logs: formattedLogs });
         } catch (error) {
           console.error('이벤트 로그 조회 실패:', error);
         }
@@ -143,7 +145,12 @@ const useRobotStore = create<RobotState>()(
 
         try {
           const mapData = await fetchRobotMap(robotId);
-          set({ mapData, isMapLoading: false, mapError: null });
+          set({
+            mapData,
+            zones: mapData.zones && mapData.zones.length > 0 ? mapData.zones : get().zones,
+            isMapLoading: false,
+            mapError: null,
+          });
         } catch (error) {
           console.error('맵 데이터 조회 실패:', error);
           set({
@@ -186,6 +193,11 @@ const useRobotStore = create<RobotState>()(
             : [...state.zones, zone],
         };
       }),
+
+      removeZone: (zoneId) => set((state) => ({
+        zones: state.zones.filter((zone) => zone.id !== zoneId),
+        zoneAirQuality: state.zoneAirQuality.filter((item) => item.zone_id !== zoneId),
+      })),
 
       saveZones: async (robotId) => {
         await saveRobotZones(robotId, get().zones);
