@@ -12,7 +12,18 @@ export interface RobotMap {
   map_name: string;
   map_url: string;
   metadata: MapMetadata;
+  zones?: RobotZone[];
   last_updated: string;
+}
+
+interface RobotMapResponse {
+  robot_id: string;
+  map_name?: string;
+  map_url?: string;
+  image_url?: string;
+  metadata: MapMetadata;
+  zones?: RobotZone[];
+  last_updated?: string;
 }
 
 export interface ZoneArea {
@@ -22,13 +33,23 @@ export interface ZoneArea {
   y_max: number;
 }
 
+export interface ZonePoint {
+  x: number;
+  y: number;
+}
+
 export interface RobotZone {
   id: number;
   name: string;
-  center: {
-    x: number;
-    y: number;
-  };
+  center: ZonePoint;
+  color?: string;
+  area?: ZoneArea;
+  polygon?: ZonePoint[];
+}
+
+interface SaveRobotZonePayload {
+  name: string;
+  center?: ZonePoint;
   area?: ZoneArea;
 }
 
@@ -75,9 +96,21 @@ export interface RobotSchedulePayload {
   enabled: boolean;
 }
 
+export interface RobotEventLog {
+  log_id?: number;
+  event_type?: string;
+  message: string;
+  created_at: string;
+}
+
 const API_BASE_URL = import.meta.env.VITE_ARIA_API_URL || 'http://localhost:3000';
+const SOCKET_BASE_URL =
+  import.meta.env.VITE_ARIA_SOCKET_URL ||
+  import.meta.env.VITE_ARIA_API_URL ||
+  'http://localhost:3000';
 const API_TOKEN = import.meta.env.VITE_API_SECRET_TOKEN;
 const DEFAULT_ID = import.meta.env.VITE_ROBOT_ID || '1';
+const REQUEST_TIMEOUT_MS = 8000;
 
 const getRobotId = (robotId?: string) => robotId || DEFAULT_ID;
 
@@ -94,12 +127,14 @@ const createTokenHeaders = (token: string) => ({
 
 export const sendRobotCommand = async (robotId: string, target: string, action: string) => {
   const targetId = getRobotId(robotId);
+  const command = target === 'SET_MODE' ? 'MODE' : target;
+  const value = action;
 
   try {
     const response = await axios.post(
       `${API_BASE_URL}/robots/${targetId}/command`,
-      { target, action },
-      { headers: authHeaders }
+      { command, value },
+      { headers: authHeaders, timeout: REQUEST_TIMEOUT_MS }
     );
     return response.data;
   } catch (error) {
@@ -109,9 +144,31 @@ export const sendRobotCommand = async (robotId: string, target: string, action: 
   }
 };
 
+export const fetchRobotEvents = async (robotId?: string): Promise<RobotEventLog[]> => {
+  const targetId = getRobotId(robotId);
+
+  try {
+    const response = await axios.get(`${API_BASE_URL}/robots/${targetId}/events`, {
+      headers: authHeaders,
+      timeout: REQUEST_TIMEOUT_MS,
+    });
+
+    if (Array.isArray(response.data)) return response.data;
+    return response.data.data || response.data.events || [];
+  } catch (error) {
+    const response = await axios.get(`${SOCKET_BASE_URL}/api/events`, {
+      params: { robot_id: targetId },
+      timeout: REQUEST_TIMEOUT_MS,
+    });
+
+    return response.data.data || [];
+  }
+};
+
 export const verifyQrToken = async (token: string): Promise<AuthVerifyResult> => {
   const response = await axios.get(`${API_BASE_URL}/auth/verify`, {
     headers: createTokenHeaders(token),
+    timeout: REQUEST_TIMEOUT_MS,
   });
   return response.data;
 };
@@ -120,24 +177,44 @@ export const fetchRobotMap = async (robotId?: string): Promise<RobotMap> => {
   const targetId = getRobotId(robotId);
   const response = await axios.get(`${API_BASE_URL}/robots/${targetId}/map`, {
     headers: authHeaders,
+    timeout: REQUEST_TIMEOUT_MS,
   });
-  return response.data;
+  const data = response.data as RobotMapResponse;
+  const mapUrl = data.map_url || data.image_url;
+
+  if (!mapUrl) {
+    throw new Error('Map response must include map_url or image_url');
+  }
+
+  return {
+    robot_id: data.robot_id || targetId,
+    map_name: data.map_name || 'ARIA map',
+    map_url: mapUrl,
+    metadata: data.metadata,
+    zones: data.zones || [],
+    last_updated: data.last_updated || new Date().toISOString(),
+  };
 };
 
 export const fetchRobotZones = async (robotId?: string): Promise<RobotZone[]> => {
   const targetId = getRobotId(robotId);
   const response = await axios.get(`${API_BASE_URL}/robots/${targetId}/zones`, {
     headers: authHeaders,
+    timeout: REQUEST_TIMEOUT_MS,
   });
-  return response.data.zones || [];
+  if (Array.isArray(response.data)) return response.data;
+  if (Array.isArray(response.data.zones)) return response.data.zones;
+  if (response.data?.id && response.data?.name) return [response.data];
+  return [];
 };
 
 export const saveRobotZones = async (robotId: string | undefined, zones: RobotZone[]) => {
   const targetId = getRobotId(robotId);
+  const payload: SaveRobotZonePayload[] = zones.map(({ name, center, area }) => ({ name, center, area }));
   const response = await axios.put(
     `${API_BASE_URL}/robots/${targetId}/zones`,
-    { zones },
-    { headers: authHeaders }
+    { zones: payload },
+    { headers: authHeaders, timeout: REQUEST_TIMEOUT_MS }
   );
   return response.data;
 };
@@ -146,6 +223,7 @@ export const fetchZoneAirQuality = async (robotId?: string): Promise<ZoneAirQual
   const targetId = getRobotId(robotId);
   const response = await axios.get(`${API_BASE_URL}/robots/${targetId}/air-quality/zones`, {
     headers: authHeaders,
+    timeout: REQUEST_TIMEOUT_MS,
   });
   return response.data.zones || [];
 };
@@ -154,6 +232,7 @@ export const fetchRobotStatus = async (robotId?: string): Promise<RobotStatusSum
   const targetId = getRobotId(robotId);
   const response = await axios.get(`${API_BASE_URL}/robots/${targetId}/status`, {
     headers: authHeaders,
+    timeout: REQUEST_TIMEOUT_MS,
   });
   return response.data;
 };
@@ -165,6 +244,7 @@ export const saveRobotSchedule = async (
   const targetId = getRobotId(robotId);
   const response = await axios.post(`${API_BASE_URL}/robots/${targetId}/schedule`, payload, {
     headers: authHeaders,
+    timeout: REQUEST_TIMEOUT_MS,
   });
   return response.data;
 };
@@ -174,7 +254,7 @@ export const resetRobotData = async (robotId: string | undefined, target: 'MAP' 
   const response = await axios.post(
     `${API_BASE_URL}/robots/${targetId}/reset`,
     { target },
-    { headers: authHeaders }
+    { headers: authHeaders, timeout: REQUEST_TIMEOUT_MS }
   );
   return response.data;
 };
@@ -186,6 +266,7 @@ export const navigateRobot = async (
   const targetId = getRobotId(robotId);
   const response = await axios.post(`${API_BASE_URL}/robots/${targetId}/navigate`, payload, {
     headers: authHeaders,
+    timeout: REQUEST_TIMEOUT_MS,
   });
   return response.data;
 };

@@ -9,6 +9,7 @@ import { resetRobotData } from '../api/ARIARobotController';
 const SettingsPage = () => {
   const navigate = useNavigate();
   const logout = useAuthStore((state) => state.logout);
+  const authRobotId = useAuthStore((state) => state.robotId);
   // 1. 공통 모달(초기화 등) 상태
   const [isCommonOpen, setIsCommonOpen] = useState(false);
   const [modalType, setModalType] = useState<ModalType>('RESET');
@@ -17,7 +18,7 @@ const SettingsPage = () => {
   const [isSleepOpen, setIsSleepOpen] = useState(false);
 
   // 환경 변수 불러오기
-  const ROBOT_ID = import.meta.env.VITE_ROBOT_ID || "1";
+  const ROBOT_ID = authRobotId || import.meta.env.VITE_ROBOT_ID || "1";
 
   // --- [추가] 초기화 버튼 클릭 시 모달을 여는 함수 ---
   const handleOpenReset = (type: ModalType) => {
@@ -104,6 +105,7 @@ const SettingsPage = () => {
         isOpen={isSleepOpen}
         onClose={() => setIsSleepOpen(false)}
         onSave={handleSaveSleepTime}
+        robotId={ROBOT_ID}
       />
 
       <Navigation />

@@ -19,6 +19,7 @@ import EventLogModal from '../components/EventLogModal';
 import AIModeManualModal from '../components/AIModeManualModal';
 import { navigateRobot, sendRobotCommand } from '../api/ARIARobotController';
 import useRobotStore from '../store/useRobotStore';
+import useAuthStore from '../store/useAuthStore';
 
 const formatUpdatedAt = (value?: string) => {
   if (!value) return '갱신 정보 없음';
@@ -65,7 +66,8 @@ const MainPage = () => {
   const [isManualOpen, setIsManualOpen] = useState(false);
   const [selectedZoneId, setSelectedZoneId] = useState<number | null>(null);
 
-  const robotId = import.meta.env.VITE_ROBOT_ID || '1';
+  const authRobotId = useAuthStore((state) => state.robotId);
+  const robotId = authRobotId || import.meta.env.VITE_ROBOT_ID || '1';
   const hasMapData = Boolean(mapData);
 
   const selectedZone = useMemo(
