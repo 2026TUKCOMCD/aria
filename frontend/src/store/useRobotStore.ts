@@ -164,6 +164,7 @@ const useRobotStore = create<RobotState>()(
       loadZones: async (robotId) => {
         try {
           const zones = await fetchRobotZones(robotId);
+          if (zones.length === 0) return;
           set({ zones });
         } catch (error) {
           console.error('구역 목록 조회 실패:', error);
@@ -200,7 +201,16 @@ const useRobotStore = create<RobotState>()(
       })),
 
       saveZones: async (robotId) => {
-        await saveRobotZones(robotId, get().zones);
+        const state = get();
+        const mapZones = state.mapData?.zones || [];
+        const sourceZones = mapZones.length > 0 ? mapZones : state.zones;
+        const savedNamesById = new Map(state.zones.map((zone) => [zone.id, zone.name]));
+        const zonesToSave = sourceZones.map((zone) => ({
+          ...zone,
+          name: savedNamesById.get(zone.id) || zone.name,
+        }));
+
+        await saveRobotZones(robotId, zonesToSave);
       },
 
       clearLogs: () => set({ logs: [] }),
