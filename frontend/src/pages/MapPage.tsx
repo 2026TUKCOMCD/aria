@@ -1,11 +1,11 @@
-import { Fragment, useEffect, useMemo, useState, type MouseEvent } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import CheckIcon from '../assets/check.svg?react';
 import MapIcon from '../assets/map.svg?react';
 import Navigation from '../components/Navigation';
 import NameInputModal from '../components/NameInputModal';
 import useRobotStore from '../store/useRobotStore';
 import useAuthStore from '../store/useAuthStore';
-import type { AirQualityStatus, RobotZone, ZoneAirQuality, ZoneArea, ZonePoint } from '../api/ARIARobotController';
+import type { AirQualityStatus, ZoneAirQuality, ZoneArea, ZonePoint } from '../api/ARIARobotController';
 
 const AIR_QUALITY_STALE_MINUTES = 5;
 
@@ -43,7 +43,6 @@ const airQualityStyle: Record<AirQualityStatus, { label: string; className: stri
 };
 
 const MapPage = () => {
-  const [tab, setTab] = useState<'AREA' | 'LOCATION'>('AREA');
   const [selectedZoneId, setSelectedZoneId] = useState<number | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -60,17 +59,26 @@ const MapPage = () => {
     loadZones,
     loadZoneAirQuality,
     updateZone,
-    removeZone,
     saveZones,
   } = useRobotStore();
 
   const authRobotId = useAuthStore((state) => state.robotId);
-  const robotId = authRobotId || import.meta.env.VITE_ROBOT_ID || '1';
+  const robotId = import.meta.env.VITE_ROBOT_ID || authRobotId || '1';
   const metadata = mapData?.metadata;
+  const displayZones = useMemo(() => {
+    const mapZones = mapData?.zones || [];
+    if (mapZones.length === 0) return zones;
+
+    const savedNamesById = new Map(zones.map((zone) => [zone.id, zone.name]));
+    return mapZones.map((zone) => ({
+      ...zone,
+      name: savedNamesById.get(zone.id) || zone.name,
+    }));
+  }, [mapData?.zones, zones]);
 
   const selectedZone = useMemo(
-    () => zones.find((zone) => zone.id === selectedZoneId) || null,
-    [selectedZoneId, zones]
+    () => displayZones.find((zone) => zone.id === selectedZoneId) || null,
+    [displayZones, selectedZoneId]
   );
 
   const airQualityByZoneId = useMemo(() => {
@@ -92,12 +100,65 @@ const MapPage = () => {
     };
   }, [metadata]);
 
-  const worldToPercent = (point: { x: number; y: number }) => {
+  const zoneBounds = useMemo(() => {
+    const xs: number[] = [];
+    const ys: number[] = [];
+
+    displayZones.forEach((zone) => {
+      xs.push(zone.center.x);
+      ys.push(zone.center.y);
+
+      if (zone.area) {
+        xs.push(zone.area.x_min, zone.area.x_max);
+        ys.push(zone.area.y_min, zone.area.y_max);
+      }
+
+      zone.polygon?.forEach((point) => {
+        xs.push(point.x);
+        ys.push(point.y);
+      });
+    });
+
+    if (xs.length === 0 || ys.length === 0) return null;
+
+    return {
+      minX: Math.min(...xs),
+      maxX: Math.max(...xs),
+      minY: Math.min(...ys),
+      maxY: Math.max(...ys),
+    };
+  }, [displayZones]);
+
+  const zoneToPercent = (point: { x: number; y: number }) => {
+    if (!zoneBounds) return null;
+
+    const width = zoneBounds.maxX - zoneBounds.minX;
+    const height = zoneBounds.maxY - zoneBounds.minY;
+
+    if (width <= 0 || height <= 0) return null;
+
+    const left = ((point.x - zoneBounds.minX) / width) * 100;
+    const top = (1 - (point.y - zoneBounds.minY) / height) * 100;
+
+    return {
+      left: Math.min(92, Math.max(8, left)),
+      top: Math.min(92, Math.max(8, top)),
+    };
+  };
+
+  const worldToPercent = (point: { x: number; y: number }, shouldClamp = false) => {
     if (!metadata || !worldSize) return { left: 50, top: 50 };
 
     const [originX, originY] = metadata.origin;
-    const left = ((point.x - originX) / worldSize.width) * 100;
-    const top = (1 - (point.y - originY) / worldSize.height) * 100;
+    const rawLeft = ((point.x - originX) / worldSize.width) * 100;
+    const rawTop = (1 - (point.y - originY) / worldSize.height) * 100;
+
+    if (!shouldClamp) {
+      return { left: rawLeft, top: rawTop };
+    }
+
+    const left = Number.isFinite(rawLeft) ? Math.min(94, Math.max(6, rawLeft)) : 50;
+    const top = Number.isFinite(rawTop) ? Math.min(94, Math.max(6, rawTop)) : 50;
 
     return { left, top };
   };
@@ -130,45 +191,10 @@ const MapPage = () => {
       .join(' ');
   };
 
-  const handleMapClick = (event: MouseEvent<HTMLDivElement>) => {
-    if (tab !== 'LOCATION' || !metadata || !worldSize) return;
-
-    const rect = event.currentTarget.getBoundingClientRect();
-    const clickXPercent = ((event.clientX - rect.left) / rect.width) * 100;
-    const clickYPercent = ((event.clientY - rect.top) / rect.height) * 100;
-    const [originX, originY] = metadata.origin;
-
-    const x = originX + (clickXPercent / 100) * worldSize.width;
-    const y = originY + (1 - clickYPercent / 100) * worldSize.height;
-    const nextId = zones.length > 0 ? Math.max(...zones.map((zone) => zone.id)) + 1 : 1;
-
-    const newZone: RobotZone = {
-      id: nextId,
-      name: `새 구역 ${nextId}`,
-      center: {
-        x: Number(x.toFixed(2)),
-        y: Number(y.toFixed(2)),
-      },
-    };
-
-    updateZone(newZone);
-    setSelectedZoneId(newZone.id);
-  };
-
   const handleSaveZoneName = (newName: string) => {
     if (!selectedZone) return;
 
     updateZone({ ...selectedZone, name: newName });
-    setSelectedZoneId(null);
-  };
-
-  const handleDeleteSelectedZone = () => {
-    if (!selectedZone) return;
-
-    const shouldDelete = window.confirm(`"${selectedZone.name}" 구역을 삭제할까요?`);
-    if (!shouldDelete) return;
-
-    removeZone(selectedZone.id);
     setSelectedZoneId(null);
   };
 
@@ -180,19 +206,22 @@ const MapPage = () => {
       alert('구역 정보가 저장되었습니다.');
     } catch (error) {
       console.error('구역 정보 저장 실패:', error);
+      if (error && typeof error === 'object' && 'response' in error) {
+        console.error('구역 정보 저장 응답:', error.response);
+      }
       alert('구역 정보를 저장하지 못했습니다.');
     } finally {
       setIsSaving(false);
     }
   };
 
-  const robotPoint = robotPosition ? worldToPercent(robotPosition) : null;
+  const robotPoint = robotPosition ? worldToPercent(robotPosition, true) : null;
 
   return (
     <div className="flex min-h-screen flex-col pb-[100px] font-sans">
       <header className="flex flex-col items-center justify-center pt-12">
         <h2 className="text-[20px] font-black tracking-tight text-main-blue">
-          {tab === 'AREA' ? '구역을 눌러서 이름을 설정해주세요' : '맵을 눌러 위치를 설정해주세요'}
+          구역을 눌러서 이름을 설정해주세요
         </h2>
         <p className="mt-2 text-[14px] font-bold text-gray-500">
           마지막 갱신: {formatUpdatedAt(mapData?.last_updated)}
@@ -202,25 +231,10 @@ const MapPage = () => {
       <section className="mt-3 px-6">
         <div className="w-full rounded-[30px] border border-main-sky bg-main-sky p-3 shadow-xl">
           <div className="flex h-[65px] w-full items-center rounded-[25px] bg-white p-1.5">
-            <button
-              onClick={() => setTab('AREA')}
-              className={`flex h-full flex-1 items-center justify-center gap-2 rounded-[20px] text-[18px] font-black transition-all ${
-                tab === 'AREA' ? 'bg-main-blue text-white shadow-md' : 'text-gray-400'
-              }`}
-            >
-              구역이름
-              {tab === 'AREA' && <CheckIcon className="h-5 w-5 fill-current" />}
-            </button>
-
-            <button
-              onClick={() => setTab('LOCATION')}
-              className={`flex h-full flex-1 items-center justify-center gap-2 rounded-[20px] text-[18px] font-black transition-all ${
-                tab === 'LOCATION' ? 'bg-main-blue text-white shadow-md' : 'text-gray-400'
-              }`}
-            >
-              위치설정
-              {tab === 'LOCATION' && <CheckIcon className="h-5 w-5 fill-current" />}
-            </button>
+            <div className="flex h-full flex-1 items-center justify-center gap-2 rounded-[20px] bg-main-blue text-[18px] font-black text-white shadow-md">
+              구역 이름 설정
+              <CheckIcon className="h-5 w-5 fill-current" />
+            </div>
           </div>
         </div>
       </section>
@@ -241,7 +255,6 @@ const MapPage = () => {
                 style={{
                   aspectRatio: metadata ? `${metadata.width} / ${metadata.height}` : '4 / 3',
                 }}
-                onClick={handleMapClick}
               >
                 <img
                   src={mapData.map_url}
@@ -250,8 +263,8 @@ const MapPage = () => {
                   draggable={false}
                 />
 
-                {zones.map((zone) => {
-                  const point = worldToPercent(zone.center);
+                {displayZones.map((zone) => {
+                  const point = zoneToPercent(zone.center) || worldToPercent(zone.center, true);
                   const areaStyle = areaToStyle(zone.area);
                   const polygonPoints = polygonToPoints(zone.polygon);
                   const hasPolygon = Boolean(polygonPoints);
@@ -405,19 +418,8 @@ const MapPage = () => {
         </button>
       </section>
 
-      {selectedZone && (
-        <section className="mb-3 px-6">
-          <button
-            onClick={handleDeleteSelectedZone}
-            className="flex h-[52px] w-full items-center justify-center rounded-[18px] border-2 border-main-red bg-white text-[16px] font-black text-main-red shadow-md transition-all active:scale-95"
-          >
-            선택 구역 삭제
-          </button>
-        </section>
-      )}
-
       <NameInputModal
-        isOpen={tab === 'AREA' && Boolean(selectedZone)}
+        isOpen={Boolean(selectedZone)}
         currentName={selectedZone?.name || ''}
         onClose={() => setSelectedZoneId(null)}
         onSave={handleSaveZoneName}
