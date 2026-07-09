@@ -67,13 +67,36 @@ const MainPage = () => {
   const [selectedZoneId, setSelectedZoneId] = useState<number | null>(null);
 
   const authRobotId = useAuthStore((state) => state.robotId);
-  const robotId = authRobotId || import.meta.env.VITE_ROBOT_ID || '1';
+  const robotId = import.meta.env.VITE_ROBOT_ID || authRobotId || '1';
   const hasMapData = Boolean(mapData);
+  const metadata = mapData?.metadata;
 
   const selectedZone = useMemo(
     () => zones.find((zone) => zone.id === selectedZoneId) || zones[0] || null,
     [selectedZoneId, zones]
   );
+
+  const worldSize = useMemo(() => {
+    if (!metadata) return null;
+
+    return {
+      width: metadata.width * metadata.resolution,
+      height: metadata.height * metadata.resolution,
+    };
+  }, [metadata]);
+
+  const worldToPercent = (point: { x: number; y: number }) => {
+    if (!metadata || !worldSize) return { left: 50, top: 50 };
+
+    const [originX, originY] = metadata.origin;
+    const rawLeft = ((point.x - originX) / worldSize.width) * 100;
+    const rawTop = (1 - (point.y - originY) / worldSize.height) * 100;
+
+    return {
+      left: Math.min(94, Math.max(6, rawLeft)),
+      top: Math.min(94, Math.max(6, rawTop)),
+    };
+  };
 
   useEffect(() => {
     loadMapData(robotId);
@@ -306,8 +329,7 @@ const MainPage = () => {
 
           {hasMapData && mapData ? (
             <div className="flex h-full flex-col gap-3 p-4">
-              <div className="flex items-center justify-between">
-                <span className="text-[15px] font-black text-gray-700">{mapData.map_name}</span>
+              <div className="flex items-center justify-end">
                 <span className="text-[12px] font-bold text-gray-400">{formatUpdatedAt(mapData.last_updated)}</span>
               </div>
 
@@ -320,9 +342,32 @@ const MainPage = () => {
                 <img
                   src={mapData.map_url}
                   alt={mapData.map_name}
-                  className="h-full w-full object-fill"
+                  className="absolute inset-0 h-full w-full object-fill"
                   draggable={false}
                 />
+                {!isAiMode && zones.map((zone) => {
+                  const position = worldToPercent(zone.center);
+                  const active = selectedZone?.id === zone.id;
+
+                  return (
+                    <button
+                      key={`map-label-${zone.id}`}
+                      type="button"
+                      onClick={() => setSelectedZoneId(zone.id)}
+                      className={`absolute z-10 max-w-[120px] -translate-x-1/2 -translate-y-1/2 truncate rounded-full px-3 py-1.5 text-[12px] font-black shadow-md transition-all active:scale-95 ${
+                        active
+                          ? 'bg-main-blue text-white ring-2 ring-white'
+                          : 'bg-white/90 text-main-blue ring-1 ring-main-blue/20'
+                      }`}
+                      style={{
+                        left: `${position.left}%`,
+                        top: `${position.top}%`,
+                      }}
+                    >
+                      {zone.name}
+                    </button>
+                  );
+                })}
               </div>
 
               {!isAiMode && (

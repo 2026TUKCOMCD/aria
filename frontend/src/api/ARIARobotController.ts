@@ -22,7 +22,7 @@ interface RobotMapResponse {
   map_url?: string;
   image_url?: string;
   metadata: MapMetadata;
-  zones?: RobotZone[];
+  zones?: RobotZoneResponse[];
   last_updated?: string;
 }
 
@@ -47,10 +47,23 @@ export interface RobotZone {
   polygon?: ZonePoint[];
 }
 
-interface SaveRobotZonePayload {
+type ZonePointResponse = ZonePoint | [number, number] | string;
+
+interface RobotZoneResponse {
+  id: number;
   name: string;
-  center?: ZonePoint;
+  center?: ZonePointResponse;
+  color?: string;
   area?: ZoneArea;
+  polygon?: ZonePointResponse[] | string;
+}
+
+interface SaveRobotZonePayload {
+  id: number;
+  name: string;
+  center: ZonePoint;
+  area?: ZoneArea;
+  polygon?: [number, number][];
 }
 
 export type AirQualityStatus = 'GOOD' | 'NORMAL' | 'BAD' | 'STALE';
@@ -125,6 +138,54 @@ const createTokenHeaders = (token: string) => ({
   'X-ARIA-QR-TOKEN': token,
 });
 
+const parseJsonString = <T>(value: string): T | null => {
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
+  }
+};
+
+const normalizeZonePoint = (point: ZonePointResponse | undefined): ZonePoint => {
+  if (!point) return { x: 0, y: 0 };
+
+  if (typeof point === 'string') {
+    const parsed = parseJsonString<ZonePointResponse>(point);
+    return normalizeZonePoint(parsed || undefined);
+  }
+
+  if (Array.isArray(point)) {
+    return { x: point[0], y: point[1] };
+  }
+
+  return point;
+};
+
+const normalizeZonePolygon = (polygon?: ZonePointResponse[] | string): ZonePoint[] | undefined => {
+  if (!polygon) return undefined;
+
+  if (typeof polygon === 'string') {
+    const parsed = parseJsonString<ZonePointResponse[]>(polygon);
+    return normalizeZonePolygon(parsed || undefined);
+  }
+
+  return polygon.map(normalizeZonePoint);
+};
+
+const normalizeZone = (zone: RobotZoneResponse): RobotZone => ({
+  id: zone.id,
+  name: zone.name,
+  center: normalizeZonePoint(zone.center),
+  color: zone.color,
+  area: zone.area,
+  polygon: normalizeZonePolygon(zone.polygon),
+});
+
+const normalizeZones = (zones?: RobotZoneResponse[]): RobotZone[] => {
+  if (!Array.isArray(zones)) return [];
+  return zones.map(normalizeZone);
+};
+
 export const sendRobotCommand = async (robotId: string, target: string, action: string) => {
   const targetId = getRobotId(robotId);
   const command = target === 'SET_MODE' ? 'MODE' : target;
@@ -191,7 +252,7 @@ export const fetchRobotMap = async (robotId?: string): Promise<RobotMap> => {
     map_name: data.map_name || 'ARIA map',
     map_url: mapUrl,
     metadata: data.metadata,
-    zones: data.zones || [],
+    zones: normalizeZones(data.zones),
     last_updated: data.last_updated || new Date().toISOString(),
   };
 };
@@ -202,15 +263,21 @@ export const fetchRobotZones = async (robotId?: string): Promise<RobotZone[]> =>
     headers: authHeaders,
     timeout: REQUEST_TIMEOUT_MS,
   });
-  if (Array.isArray(response.data)) return response.data;
-  if (Array.isArray(response.data.zones)) return response.data.zones;
-  if (response.data?.id && response.data?.name) return [response.data];
+  if (Array.isArray(response.data)) return normalizeZones(response.data);
+  if (Array.isArray(response.data.zones)) return normalizeZones(response.data.zones);
+  if (response.data?.id && response.data?.name) return [normalizeZone(response.data)];
   return [];
 };
 
 export const saveRobotZones = async (robotId: string | undefined, zones: RobotZone[]) => {
   const targetId = getRobotId(robotId);
-  const payload: SaveRobotZonePayload[] = zones.map(({ name, center, area }) => ({ name, center, area }));
+  const payload: SaveRobotZonePayload[] = zones.map(({ id, name, center, area, polygon }) => ({
+    id,
+    name,
+    center,
+    area,
+    polygon: polygon?.map((point) => [point.x, point.y]),
+  }));
   const response = await axios.put(
     `${API_BASE_URL}/robots/${targetId}/zones`,
     { zones: payload },
