@@ -104,6 +104,33 @@ export interface AuthVerifyResult {
   message?: string;
 }
 
+interface AuthVerifyResponse {
+  valid?: boolean;
+  isAuthorized?: boolean;
+  robot_id?: string;
+  user_name?: string;
+  robot_name?: string;
+  context?: {
+    robot_id?: string;
+    user_name?: string;
+    robot_name?: string;
+  };
+  message?: string;
+}
+
+export interface StoreQrTokenPayload {
+  qr_token: string;
+  robot_id: string;
+  user_name?: string;
+  robot_name?: string;
+}
+
+export interface StoreQrTokenResult {
+  message?: string;
+  qr_token?: string;
+  error?: string;
+}
+
 export interface RobotSchedulePayload {
   wake_time: string;
   sleep_time: string;
@@ -135,9 +162,26 @@ const REQUEST_TIMEOUT_MS = 8000;
 
 const getRobotId = (robotId?: string) => robotId || DEFAULT_ID;
 
-const authHeaders = {
-  'Content-Type': 'application/json',
-  ...(API_TOKEN ? { 'X-ARIA-SECRET': API_TOKEN } : {}),
+const getStoredQrToken = () => {
+  try {
+    const rawAuth = window.localStorage.getItem('aria-auth-storage');
+    if (!rawAuth) return null;
+
+    const parsedAuth = JSON.parse(rawAuth);
+    return parsedAuth?.state?.qrToken || null;
+  } catch {
+    return null;
+  }
+};
+
+const createAuthHeaders = () => {
+  const qrToken = getStoredQrToken();
+
+  return {
+    'Content-Type': 'application/json',
+    ...(API_TOKEN ? { 'X-ARIA-SECRET': API_TOKEN } : {}),
+    ...(qrToken ? { Authorization: `Bearer ${qrToken}` } : {}),
+  };
 };
 
 const createTokenHeaders = (token: string) => ({
@@ -203,7 +247,7 @@ export const sendRobotCommand = async (robotId: string, target: string, action: 
     const response = await axios.post(
       `${API_BASE_URL}/robots/${targetId}/command`,
       { command, value },
-      { headers: authHeaders, timeout: REQUEST_TIMEOUT_MS }
+      { headers: createAuthHeaders(), timeout: REQUEST_TIMEOUT_MS }
     );
     return response.data;
   } catch (error) {
@@ -218,7 +262,7 @@ export const fetchRobotEvents = async (robotId?: string): Promise<RobotEventLog[
 
   try {
     const response = await axios.get(`${API_BASE_URL}/robots/${targetId}/events`, {
-      headers: authHeaders,
+      headers: createAuthHeaders(),
       timeout: REQUEST_TIMEOUT_MS,
     });
 
@@ -240,13 +284,32 @@ export const verifyQrToken = async (token: string): Promise<AuthVerifyResult> =>
     timeout: REQUEST_TIMEOUT_MS,
     validateStatus: (status) => status >= 200 && status < 500,
   });
+  const data = response.data as AuthVerifyResponse;
+
+  return {
+    valid: Boolean(data.valid ?? data.isAuthorized),
+    robot_id: data.robot_id || data.context?.robot_id,
+    user_name: data.user_name || data.context?.user_name,
+    robot_name: data.robot_name || data.context?.robot_name,
+    message: data.message,
+  };
+};
+
+export const storeQrToken = async (
+  payload: StoreQrTokenPayload
+): Promise<StoreQrTokenResult> => {
+  const response = await axios.post(`${API_BASE_URL}/auth/verify`, payload, {
+    headers: createAuthHeaders(),
+    timeout: REQUEST_TIMEOUT_MS,
+    validateStatus: (status) => status >= 200 && status < 500,
+  });
   return response.data;
 };
 
 export const fetchRobotMap = async (robotId?: string): Promise<RobotMap> => {
   const targetId = getRobotId(robotId);
   const response = await axios.get(`${API_BASE_URL}/robots/${targetId}/map`, {
-    headers: authHeaders,
+    headers: createAuthHeaders(),
     timeout: REQUEST_TIMEOUT_MS,
   });
   const data = response.data as RobotMapResponse;
@@ -269,7 +332,7 @@ export const fetchRobotMap = async (robotId?: string): Promise<RobotMap> => {
 export const fetchRobotZones = async (robotId?: string): Promise<RobotZone[]> => {
   const targetId = getRobotId(robotId);
   const response = await axios.get(`${API_BASE_URL}/robots/${targetId}/zones`, {
-    headers: authHeaders,
+    headers: createAuthHeaders(),
     timeout: REQUEST_TIMEOUT_MS,
   });
   if (Array.isArray(response.data)) return normalizeZones(response.data);
@@ -290,7 +353,7 @@ export const saveRobotZones = async (robotId: string | undefined, zones: RobotZo
   const response = await axios.put(
     `${API_BASE_URL}/robots/${targetId}/zones`,
     { zones: payload },
-    { headers: authHeaders, timeout: REQUEST_TIMEOUT_MS }
+    { headers: createAuthHeaders(), timeout: REQUEST_TIMEOUT_MS }
   );
   return response.data;
 };
@@ -298,7 +361,7 @@ export const saveRobotZones = async (robotId: string | undefined, zones: RobotZo
 export const fetchRobotDock = async (robotId?: string): Promise<RobotDockLocation | null> => {
   const targetId = getRobotId(robotId);
   const response = await axios.get(`${API_BASE_URL}/robots/${targetId}/dock`, {
-    headers: authHeaders,
+    headers: createAuthHeaders(),
     timeout: REQUEST_TIMEOUT_MS,
     validateStatus: (status) => (status >= 200 && status < 300) || status === 404,
   });
@@ -313,7 +376,7 @@ export const saveRobotDock = async (
 ) => {
   const targetId = getRobotId(robotId);
   const response = await axios.put(`${API_BASE_URL}/robots/${targetId}/dock`, payload, {
-    headers: authHeaders,
+    headers: createAuthHeaders(),
     timeout: REQUEST_TIMEOUT_MS,
   });
   return response.data;
@@ -322,7 +385,7 @@ export const saveRobotDock = async (
 export const fetchZoneAirQuality = async (robotId?: string): Promise<ZoneAirQuality[]> => {
   const targetId = getRobotId(robotId);
   const response = await axios.get(`${API_BASE_URL}/robots/${targetId}/air-quality/zones`, {
-    headers: authHeaders,
+    headers: createAuthHeaders(),
     timeout: REQUEST_TIMEOUT_MS,
   });
   return response.data.zones || [];
@@ -331,7 +394,7 @@ export const fetchZoneAirQuality = async (robotId?: string): Promise<ZoneAirQual
 export const fetchRobotStatus = async (robotId?: string): Promise<RobotStatusSummary> => {
   const targetId = getRobotId(robotId);
   const response = await axios.get(`${API_BASE_URL}/robots/${targetId}/status`, {
-    headers: authHeaders,
+    headers: createAuthHeaders(),
     timeout: REQUEST_TIMEOUT_MS,
   });
   return response.data;
@@ -343,7 +406,7 @@ export const saveRobotSchedule = async (
 ) => {
   const targetId = getRobotId(robotId);
   const response = await axios.post(`${API_BASE_URL}/robots/${targetId}/schedule`, payload, {
-    headers: authHeaders,
+    headers: createAuthHeaders(),
     timeout: REQUEST_TIMEOUT_MS,
   });
   return response.data;
@@ -354,7 +417,7 @@ export const resetRobotData = async (robotId: string | undefined, target: 'MAP' 
   const response = await axios.post(
     `${API_BASE_URL}/robots/${targetId}/reset`,
     { target },
-    { headers: authHeaders, timeout: REQUEST_TIMEOUT_MS }
+    { headers: createAuthHeaders(), timeout: REQUEST_TIMEOUT_MS }
   );
   return response.data;
 };
@@ -365,7 +428,7 @@ export const navigateRobot = async (
 ) => {
   const targetId = getRobotId(robotId);
   const response = await axios.post(`${API_BASE_URL}/robots/${targetId}/navigate`, payload, {
-    headers: authHeaders,
+    headers: createAuthHeaders(),
     timeout: REQUEST_TIMEOUT_MS,
   });
   return response.data;
