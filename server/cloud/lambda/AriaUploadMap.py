@@ -87,6 +87,35 @@ def lambda_handler(event, context):
         ))
         
         new_map_id = cur.fetchone()[0]
+
+        # ==========================================
+        # --- 4-2. Zone(구역) 데이터 저장 (추가된 로직) ---
+        # ==========================================
+        zones = body.get('zones', [])
+        if zones:
+            # 새 지도가 왔으니, 이 로봇의 기존 구역 정보는 모두 삭제 (초기화)
+            cur.execute("DELETE FROM robot_zones WHERE robot_id = %s", (robot_id,))
+            
+            insert_zone_sql = """
+                INSERT INTO robot_zones 
+                (robot_id, zone_id, zone_name, center_data, area_data, polygon_data)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """
+            
+            for zone in zones:
+                # JSON 필드가 없을 경우를 대비해 안전하게 파싱
+                center_json = json.dumps(zone.get('center')) if zone.get('center') else None
+                area_json = json.dumps(zone.get('area')) if zone.get('area') else None
+                polygon_json = json.dumps(zone.get('polygon')) if zone.get('polygon') else None
+                
+                cur.execute(insert_zone_sql, (
+                    robot_id,
+                    zone.get('id'),
+                    zone.get('name'),
+                    center_json,
+                    area_json,
+                    polygon_json
+                ))
         conn.commit()
         
         return {
