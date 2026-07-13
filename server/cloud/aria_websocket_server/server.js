@@ -1,85 +1,178 @@
-//  1. 필요한 모듈 불러오기 (Python의 import와 같음)
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-// PostgreSQL DB 통역기 불러오기
-const { Pool } = require('pg') 
+const { Pool } = require('pg');
+const cors = require('cors');
 
-//=====================================
-// DB 연결 셋업 (프라이빗 서브넷의 DB 정보 삽입)
-// ====================================
 const pool = new Pool({
     host: '10.0.1.183',
     user: 'aria_web',
     password: 'raspberryraspberry',
     database: 'postgres',
-    port: 5432
-})
-
-//  2. 서버 뼈대 만들기
-const app = express();
-const server = http.createServer(app);
-
-//  3. WebSocket(확성기) 설정 (CORS 허용: 누구나 접속 가능하게 끔)
-const io = new Server(server, {
-    cors: { origin: "*" }
+    port: 5432,
+    connectionTimeoutMillis: 2000,
+    idleTimeoutMillis: 1000
 });
 
-// JSON 데이터를 읽을 수 있게 설정 (API Gateway 설정과 비슷함)
+const app = express();
+app.use(cors());
 app.use(express.json());
 
-// ==========================================
-// 파트 A: 클라이언트(웹앱)와 연결되는 부분
-// ==========================================
-io.on('connection', (socket) => {
-    // 누군가 웹앱을 켜서 연결되면 이 로그가 찍힙니다.
-    console.log('새로운 기기가 연결되었습니다! ID:', socket.id);
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: { origin: '*' }
+});
 
-    // 웹앱을 끄거나 연결이 끊기면 찍히는 로그
+const sseClients = new Map();
+
+const sendSseEvent = (res, eventName, data) => {
+    res.write(`event: ${eventName}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+};
+
+const broadcastSseEvent = (robotId, eventName, data) => {
+    const targets = sseClients.get(robotId) || new Set();
+    const broadcastTargets = sseClients.get('*') || new Set();
+
+    [...targets, ...broadcastTargets].forEach((res) => {
+        sendSseEvent(res, eventName, data);
+    });
+};
+
+io.on('connection', (socket) => {
+    console.log('웹 클라이언트가 연결되었습니다. ID:', socket.id);
+
     socket.on('disconnect', () => {
-        console.log('기기 연결이 끊어졌습니다.');
+        console.log('웹 클라이언트 연결이 끊어졌습니다.');
     });
 });
 
-// ==========================================
-// 파트 B: Lambda가 알림을 보낼 때 받는 API 엔드포인트
-// ==========================================
-// Lambda가 POST 방식으로 /api/alert 주소로 데이터를 보내면 여기가 실행됩니다.
-app.post('/api/alert', async(req, res) => {
-    const alertData = req.body; // Lambda가 보낸 데이터 (예: { message: "먼지 나쁨" })
-    console.log('Lambda에서 알림 도착:', alertData);
-
-    try{
-        //DB에 저장 로직
-        const query = `
-      INSERT INTO robot_event_logs (robot_id, event_type, message, created_at)
-      VALUES ($1, $2, $3, NOW())
-    `;
-    // 람다가 보내는 데이터 구조에 맞게 매핑 (없으면 기본값 처리)
-    const values = [
-      alertData.robot_id || 'aria-01', 
-      alertData.event_type || 'INFO', 
-      alertData.message || JSON.stringify(alertData)
-    ];
-    
-    await pool.query(query, values);
-    console.log('DB 저장 완료!');
-    // 현재 접속해 있는 "모든" 웹앱에게 'robot_alert'라는 이름으로 데이터를 확성기로 쏴줍니다!
-    io.emit('robot_alert', alertData);
-
-    // Lambda에게 200 OK 응답을 돌려줍니다.
-    res.status(200).json({ success: true, message: '클라이언트들에게 알림 전송 완료!' });
-    } catch (error) {
-        console.error('DB 저장 중 에러 발생:', error);
-        // DB 저장에 실패하더라도 람다가 재시도하지 않도록 일단 500 에러를 반환합니다.
-        res.status(500).json({ success: false, error: 'DB 저장 실패' });
-    }
-    
+app.get('/health', (req, res) => {
+    res.status(200).json({ ok: true, service: 'aria-websocket-server' });
 });
 
-// ==========================================
-//  서버 켜기 (포트 3000번)
-// ==========================================
+app.get('/robots/:id/events/stream', async (req, res) => {
+    const robotId = req.params.id || '*';
+    const token = req.query.token;
+
+    console.log(`[${robotId}] SSE 연결 시도 - Token:`, token);
+
+    if (!token) {
+        return res.status(401).json({ success: false, error: '인증 토큰이 필요합니다.' });
+    }
+
+    try {
+        const query = `
+            SELECT robot_id, is_valid 
+            FROM aria_qr_tokens 
+            WHERE qr_token = $1
+        `;
+        const { rows } = await pool.query(query, [token]);
+
+        if (rows.length === 0 || !rows[0].is_valid) {
+            return res.status(403).json({ success: false, error: '유효하지 않거나 만료된 토큰입니다.' });
+        }
+
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+            'Access-Control-Allow-Origin': '*'
+        });
+
+        sendSseEvent(res, 'connected', {
+            type: 'CONNECTED',
+            timestamp: new Date().toISOString(),
+            message: '이벤트 스트림에 연결되었습니다.'
+        });
+
+        if (!sseClients.has(robotId)) {
+            sseClients.set(robotId, new Set());
+        }
+        sseClients.get(robotId).add(res);
+        console.log(`[${robotId}] SSE 클라이언트가 성공적으로 연결되었습니다.`);
+
+        const keepAlive = setInterval(() => {
+            sendSseEvent(res, 'ping', {
+                type: 'PING',
+                timestamp: new Date().toISOString()
+            });
+        }, 30000);
+
+        req.on('close', () => {
+            clearInterval(keepAlive);
+            sseClients.get(robotId)?.delete(res);
+            console.log(`[${robotId}] SSE 클라이언트 연결이 종료되었습니다.`);
+        });
+
+    } catch (error) {
+        console.error('SSE 인증 처리 중 DB 에러:', error);
+        return res.status(500).json({ success: false, error: '서버 내부 인증 오류' });
+    }
+});
+
+app.post('/api/alert', async (req, res) => {
+    const alertData = req.body;
+    console.log('Lambda 알림 수신:', alertData);
+
+    try {
+        io.emit('robot_alert', alertData);
+        broadcastSseEvent(String(alertData.robot_id || '*'), alertData.event || 'clean_status', {
+            type: alertData.type || alertData.event_type || 'INFO',
+            timestamp: alertData.timestamp || new Date().toISOString(),
+            message: alertData.message || '이벤트가 발생했습니다.',
+            ...alertData
+        });
+
+        res.status(200).json({
+            success: true,
+            message: '알림을 웹 클라이언트로 전송했습니다.'
+        });
+    } catch (error) {
+        console.error('알림 중계 실패:', error);
+        res.status(500).json({
+            success: false,
+            error: '알림 중계 실패'
+        });
+    }
+});
+
+app.get('/api/events', async (req, res) => {
+    const robotId = req.query.robot_id || 'aria_robot01';
+    console.log(`[${robotId}] 이벤트 로그 조회 요청`);
+
+    try {
+        const query = `
+            SELECT log_id, event_type, message, created_at
+            FROM robot_event_logs
+            WHERE robot_id = $1
+            ORDER BY created_at DESC
+            LIMIT 7
+        `;
+        const { rows } = await pool.query(query, [robotId]);
+
+        res.status(200).json({
+            success: true,
+            data: rows
+        });
+    } catch (error) {
+        console.error('이벤트 로그 조회 실패:', error.message);
+
+        res.status(200).json({
+            success: true,
+            data: [
+                {
+                    log_id: 999,
+                    event_type: 'INFO',
+                    message: '이벤트 로그 DB 연결이 불가능하여 테스트 데이터를 표시합니다.',
+                    created_at: new Date()
+                }
+            ],
+            isDummy: true
+        });
+    }
+});
+
 server.listen(3000, () => {
-    console.log('ARIA WebSocket 서버가 3000번 포트에서 실행 중입니다!');
+    console.log('ARIA WebSocket 서버가 3000번 포트에서 실행 중입니다.');
 });
