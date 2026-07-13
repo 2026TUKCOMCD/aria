@@ -51,40 +51,64 @@ app.get('/health', (req, res) => {
     res.status(200).json({ ok: true, service: 'aria-websocket-server' });
 });
 
-app.get('/robots/:id/events/stream', (req, res) => {
+app.get('/robots/:id/events/stream', async (req, res) => {
     const robotId = req.params.id || '*';
+    const token = req.query.token;
 
-    res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-        'Access-Control-Allow-Origin': '*'
-    });
+    console.log(`[${robotId}] SSE 연결 시도 - Token:`, token);
 
-    sendSseEvent(res, 'connected', {
-        type: 'CONNECTED',
-        timestamp: new Date().toISOString(),
-        message: '이벤트 스트림에 연결되었습니다.'
-    });
-
-    if (!sseClients.has(robotId)) {
-        sseClients.set(robotId, new Set());
+    if (!token) {
+        return res.status(401).json({ success: false, error: '인증 토큰이 필요합니다.' });
     }
-    sseClients.get(robotId).add(res);
-    console.log(`[${robotId}] SSE 클라이언트가 연결되었습니다.`);
 
-    const keepAlive = setInterval(() => {
-        sendSseEvent(res, 'ping', {
-            type: 'PING',
-            timestamp: new Date().toISOString()
+    try {
+        const query = `
+            SELECT robot_id, is_valid 
+            FROM aria_qr_tokens 
+            WHERE qr_token = $1
+        `;
+        const { rows } = await pool.query(query, [token]);
+
+        if (rows.length === 0 || !rows[0].is_valid) {
+            return res.status(403).json({ success: false, error: '유효하지 않거나 만료된 토큰입니다.' });
+        }
+
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+            'Access-Control-Allow-Origin': '*'
         });
-    }, 30000);
 
-    req.on('close', () => {
-        clearInterval(keepAlive);
-        sseClients.get(robotId)?.delete(res);
-        console.log(`[${robotId}] SSE 클라이언트 연결이 종료되었습니다.`);
-    });
+        sendSseEvent(res, 'connected', {
+            type: 'CONNECTED',
+            timestamp: new Date().toISOString(),
+            message: '이벤트 스트림에 연결되었습니다.'
+        });
+
+        if (!sseClients.has(robotId)) {
+            sseClients.set(robotId, new Set());
+        }
+        sseClients.get(robotId).add(res);
+        console.log(`[${robotId}] SSE 클라이언트가 성공적으로 연결되었습니다.`);
+
+        const keepAlive = setInterval(() => {
+            sendSseEvent(res, 'ping', {
+                type: 'PING',
+                timestamp: new Date().toISOString()
+            });
+        }, 30000);
+
+        req.on('close', () => {
+            clearInterval(keepAlive);
+            sseClients.get(robotId)?.delete(res);
+            console.log(`[${robotId}] SSE 클라이언트 연결이 종료되었습니다.`);
+        });
+
+    } catch (error) {
+        console.error('SSE 인증 처리 중 DB 에러:', error);
+        return res.status(500).json({ success: false, error: '서버 내부 인증 오류' });
+    }
 });
 
 app.post('/api/alert', async (req, res) => {
