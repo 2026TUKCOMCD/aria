@@ -33,7 +33,7 @@ const AppShell = () => {
   const authRobotId = useAuthStore((state) => state.robotId);
   const robotId = authRobotId || import.meta.env.VITE_ROBOT_ID || '1';
   const { addLog, setIsRunning, setRobotPosition } = useRobotStore();
-  const shouldShowNavigation = isLoggedIn && location.pathname !== '/auth';
+  const shouldShowNavigation = isLoggedIn && !location.pathname.startsWith('/auth');
 
   useEffect(() => {
     if (!isLoggedIn) return;
@@ -109,6 +109,7 @@ const AppShell = () => {
         <div className="flex-1 overflow-y-auto">
           <Routes>
             <Route path="/auth" element={isLoggedIn ? <Navigate to="/" replace /> : <AuthPage />} />
+            <Route path="/auth/qr" element={<AuthPage />} />
             <Route path="/" element={<ProtectedRoute><MainPage /></ProtectedRoute>} />
             <Route path="/map" element={<ProtectedRoute><MapPage /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />

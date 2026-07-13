@@ -1,8 +1,9 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState, type MouseEvent } from 'react';
 import CheckIcon from '../assets/check.svg?react';
 import MapIcon from '../assets/map.svg?react';
 import Navigation from '../components/Navigation';
 import NameInputModal from '../components/NameInputModal';
+import { navigateRobot } from '../api/ARIARobotController';
 import useRobotStore from '../store/useRobotStore';
 import useAuthStore from '../store/useAuthStore';
 import type { AirQualityStatus, ZoneAirQuality, ZoneArea, ZonePoint } from '../api/ARIARobotController';
@@ -45,11 +46,13 @@ const airQualityStyle: Record<AirQualityStatus, { label: string; className: stri
 const MapPage = () => {
   const [selectedZoneId, setSelectedZoneId] = useState<number | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [editMode, setEditMode] = useState<'ZONE_NAME' | 'CHARGER'>('ZONE_NAME');
 
   const {
     mapData,
     zones,
     zoneAirQuality,
+    chargerPosition,
     airQualityUpdatedAt,
     airQualityError,
     robotPosition,
@@ -58,12 +61,15 @@ const MapPage = () => {
     loadMapData,
     loadZones,
     loadZoneAirQuality,
+    loadChargerPosition,
     updateZone,
+    setChargerPosition,
+    saveChargerPosition,
     saveZones,
   } = useRobotStore();
 
   const authRobotId = useAuthStore((state) => state.robotId);
-  const robotId = import.meta.env.VITE_ROBOT_ID || authRobotId || '1';
+  const robotId = authRobotId || import.meta.env.VITE_ROBOT_ID || '1';
   const metadata = mapData?.metadata;
   const displayZones = useMemo(() => {
     const mapZones = mapData?.zones || [];
@@ -89,7 +95,8 @@ const MapPage = () => {
     loadMapData(robotId);
     loadZones(robotId);
     loadZoneAirQuality(robotId);
-  }, [loadMapData, loadZoneAirQuality, loadZones, robotId]);
+    loadChargerPosition(robotId);
+  }, [loadChargerPosition, loadMapData, loadZoneAirQuality, loadZones, robotId]);
 
   const worldSize = useMemo(() => {
     if (!metadata) return null;
@@ -163,6 +170,16 @@ const MapPage = () => {
     return { left, top };
   };
 
+  const percentToWorld = (leftPercent: number, topPercent: number): ZonePoint | null => {
+    if (!metadata || !worldSize) return null;
+
+    const [originX, originY] = metadata.origin;
+    return {
+      x: originX + (leftPercent / 100) * worldSize.width,
+      y: originY + (1 - topPercent / 100) * worldSize.height,
+    };
+  };
+
   const areaToStyle = (area?: ZoneArea) => {
     if (!area || !metadata || !worldSize) return null;
 
@@ -203,7 +220,14 @@ const MapPage = () => {
 
     try {
       await saveZones(robotId);
-      alert('구역 정보가 저장되었습니다.');
+      if (chargerPosition) {
+        await saveChargerPosition(robotId);
+      }
+      alert(
+        chargerPosition
+          ? `구역 정보와 충전기 위치가 저장되었습니다.\n충전기 위치: x ${chargerPosition.x.toFixed(2)}, y ${chargerPosition.y.toFixed(2)}`
+          : '구역 정보가 저장되었습니다.'
+      );
     } catch (error) {
       console.error('구역 정보 저장 실패:', error);
       if (error && typeof error === 'object' && 'response' in error) {
@@ -215,13 +239,51 @@ const MapPage = () => {
     }
   };
 
+  const handleMapClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (editMode !== 'CHARGER') return;
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const left = ((event.clientX - rect.left) / rect.width) * 100;
+    const top = ((event.clientY - rect.top) / rect.height) * 100;
+    const nextPosition = percentToWorld(left, top);
+
+    if (!nextPosition) {
+      alert('맵 메타데이터가 없어 충전기 위치를 설정할 수 없습니다.');
+      return;
+    }
+
+    setChargerPosition(nextPosition);
+  };
+
+  const handleReturnToCharger = async () => {
+    if (!chargerPosition) {
+      alert('먼저 충전기 위치를 설정해주세요.');
+      return;
+    }
+
+    try {
+      await navigateRobot(robotId, {
+        type: 'COORDINATE',
+        x: chargerPosition.x,
+        y: chargerPosition.y,
+      });
+      alert('충전기 위치로 이동 명령을 보냈습니다.');
+    } catch (error) {
+      console.error('충전기 이동 명령 실패:', error);
+      alert('충전기 위치로 이동 명령을 보내지 못했습니다.');
+    }
+  };
+
   const robotPoint = robotPosition ? worldToPercent(robotPosition, true) : null;
+  const chargerPoint = chargerPosition ? worldToPercent(chargerPosition, true) : null;
 
   return (
     <div className="flex min-h-screen flex-col pb-[100px] font-sans">
       <header className="flex flex-col items-center justify-center pt-12">
         <h2 className="text-[20px] font-black tracking-tight text-main-blue">
-          구역을 눌러서 이름을 설정해주세요
+          {editMode === 'ZONE_NAME'
+            ? '구역을 눌러서 이름을 설정해주세요'
+            : '맵을 눌러 충전기 위치를 설정해주세요'}
         </h2>
         <p className="mt-2 text-[14px] font-bold text-gray-500">
           마지막 갱신: {formatUpdatedAt(mapData?.last_updated)}
@@ -231,10 +293,33 @@ const MapPage = () => {
       <section className="mt-3 px-6">
         <div className="w-full rounded-[30px] border border-main-sky bg-main-sky p-3 shadow-xl">
           <div className="flex h-[65px] w-full items-center rounded-[25px] bg-white p-1.5">
-            <div className="flex h-full flex-1 items-center justify-center gap-2 rounded-[20px] bg-main-blue text-[18px] font-black text-white shadow-md">
+            <button
+              type="button"
+              onClick={() => setEditMode('ZONE_NAME')}
+              className={`flex h-full flex-1 items-center justify-center gap-2 rounded-[20px] text-[18px] font-black transition-all ${
+                editMode === 'ZONE_NAME'
+                  ? 'bg-main-blue text-white shadow-md'
+                  : 'text-gray-400'
+              }`}
+            >
               구역 이름 설정
-              <CheckIcon className="h-5 w-5 fill-current" />
-            </div>
+              {editMode === 'ZONE_NAME' && <CheckIcon className="h-5 w-5 fill-current" />}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEditMode('CHARGER');
+                setSelectedZoneId(null);
+              }}
+              className={`flex h-full flex-1 items-center justify-center gap-2 rounded-[20px] text-[18px] font-black transition-all ${
+                editMode === 'CHARGER'
+                  ? 'bg-main-blue text-white shadow-md'
+                  : 'text-gray-400'
+              }`}
+            >
+              충전기 위치
+              {editMode === 'CHARGER' && <CheckIcon className="h-5 w-5 fill-current" />}
+            </button>
           </div>
         </div>
       </section>
@@ -251,7 +336,10 @@ const MapPage = () => {
           {mapData ? (
             <div className="w-full p-4">
               <div
-                className="relative w-full overflow-hidden rounded-[20px] bg-gray-50"
+                className={`relative w-full overflow-hidden rounded-[20px] bg-gray-50 ${
+                  editMode === 'CHARGER' ? 'cursor-crosshair' : ''
+                }`}
+                onClick={handleMapClick}
                 style={{
                   aspectRatio: metadata ? `${metadata.width} / ${metadata.height}` : '4 / 3',
                 }}
@@ -295,6 +383,7 @@ const MapPage = () => {
                         type="button"
                         onClick={(event) => {
                           event.stopPropagation();
+                          if (editMode !== 'ZONE_NAME') return;
                           setSelectedZoneId(zone.id);
                         }}
                         className="absolute z-10 -translate-x-1/2 -translate-y-1/2"
@@ -354,6 +443,20 @@ const MapPage = () => {
                     </div>
                   </div>
                 )}
+
+                {chargerPoint && (
+                  <div
+                    className="pointer-events-none absolute z-30 -translate-x-1/2 -translate-y-1/2"
+                    style={{ left: `${chargerPoint.left}%`, top: `${chargerPoint.top}%` }}
+                  >
+                    <div className="flex h-12 w-12 items-center justify-center rounded-[14px] border-4 border-white bg-emerald-500 text-[15px] font-black text-white shadow-xl">
+                      CHG
+                    </div>
+                    <div className="mt-1 rounded-full bg-white/95 px-2 py-0.5 text-center text-[10px] font-black text-emerald-700 shadow">
+                      충전기
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="mt-3 rounded-[16px] bg-white px-3 py-3 shadow-inner">
@@ -374,6 +477,11 @@ const MapPage = () => {
                 {robotPosition && (
                   <p className="mt-2 text-center text-[11px] font-bold text-gray-500">
                     로봇 위치: x {robotPosition.x.toFixed(2)}, y {robotPosition.y.toFixed(2)}
+                  </p>
+                )}
+                {chargerPosition && (
+                  <p className="mt-1 text-center text-[11px] font-bold text-emerald-700">
+                    충전기 위치: x {chargerPosition.x.toFixed(2)}, y {chargerPosition.y.toFixed(2)}
                   </p>
                 )}
                 {airQualityError && (
@@ -417,6 +525,17 @@ const MapPage = () => {
           {isSaving ? '저장 중' : '현재 상태 저장'}
         </button>
       </section>
+
+      {chargerPosition && (
+        <section className="mb-3 px-6">
+          <button
+            onClick={handleReturnToCharger}
+            className="flex h-[54px] w-full items-center justify-center rounded-[18px] border-2 border-emerald-500 bg-white text-[16px] font-black text-emerald-600 shadow-md transition-all active:scale-95"
+          >
+            충전기 위치로 이동
+          </button>
+        </section>
+      )}
 
       <NameInputModal
         isOpen={Boolean(selectedZone)}
