@@ -67,7 +67,7 @@ const MainPage = () => {
   const [selectedZoneId, setSelectedZoneId] = useState<number | null>(null);
 
   const authRobotId = useAuthStore((state) => state.robotId);
-  const robotId = import.meta.env.VITE_ROBOT_ID || authRobotId || '1';
+  const robotId = authRobotId || import.meta.env.VITE_ROBOT_ID || '1';
   const hasMapData = Boolean(mapData);
   const metadata = mapData?.metadata;
 

@@ -2,15 +2,19 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
   fetchRobotEvents,
+  fetchRobotDock,
   fetchRobotMap,
   fetchRobotStatus,
   fetchRobotZones,
   fetchZoneAirQuality,
+  saveRobotDock,
   saveRobotZones,
+  type RobotDockLocation,
   type RobotMap,
   type RobotStatusSummary,
   type RobotZone,
   type ZoneAirQuality,
+  type ZonePoint,
 } from '../api/ARIARobotController';
 
 interface Log {
@@ -42,6 +46,7 @@ interface RobotState {
   mapData: RobotMap | null;
   zones: RobotZone[];
   zoneAirQuality: ZoneAirQuality[];
+  chargerPosition: ZonePoint | null;
   airQualityUpdatedAt: string | null;
   airQualityError: string | null;
   isMapLoading: boolean;
@@ -59,8 +64,11 @@ interface RobotState {
   loadMapData: (robotId?: string) => Promise<void>;
   loadZones: (robotId?: string) => Promise<void>;
   loadZoneAirQuality: (robotId?: string) => Promise<void>;
+  loadChargerPosition: (robotId?: string) => Promise<void>;
   updateZone: (zone: RobotZone) => void;
   removeZone: (zoneId: number) => void;
+  setChargerPosition: (position: ZonePoint | null) => void;
+  saveChargerPosition: (robotId?: string) => Promise<void>;
   saveZones: (robotId?: string) => Promise<void>;
 }
 
@@ -86,6 +94,7 @@ const useRobotStore = create<RobotState>()(
       mapData: null,
       zones: [],
       zoneAirQuality: [],
+      chargerPosition: null,
       airQualityUpdatedAt: null,
       airQualityError: null,
       isMapLoading: false,
@@ -185,6 +194,21 @@ const useRobotStore = create<RobotState>()(
         }
       },
 
+      loadChargerPosition: async (robotId) => {
+        try {
+          const dock = await fetchRobotDock(robotId);
+          if (!dock) return;
+          set({
+            chargerPosition: {
+              x: dock.x,
+              y: dock.y,
+            },
+          });
+        } catch (error) {
+          console.error('충전기 위치 조회 실패:', error);
+        }
+      },
+
       updateZone: (zone) => set((state) => {
         const exists = state.zones.some((item) => item.id === zone.id);
 
@@ -199,6 +223,21 @@ const useRobotStore = create<RobotState>()(
         zones: state.zones.filter((zone) => zone.id !== zoneId),
         zoneAirQuality: state.zoneAirQuality.filter((item) => item.zone_id !== zoneId),
       })),
+
+      setChargerPosition: (position) => set({ chargerPosition: position }),
+
+      saveChargerPosition: async (robotId) => {
+        const chargerPosition = get().chargerPosition;
+        if (!chargerPosition) return;
+
+        const payload: RobotDockLocation = {
+          x: chargerPosition.x,
+          y: chargerPosition.y,
+          theta: 0,
+        };
+
+        await saveRobotDock(robotId, payload);
+      },
 
       saveZones: async (robotId) => {
         const state = get();
@@ -229,6 +268,7 @@ const useRobotStore = create<RobotState>()(
         mapData: state.mapData,
         zones: state.zones,
         zoneAirQuality: state.zoneAirQuality,
+        chargerPosition: state.chargerPosition,
         airQualityUpdatedAt: state.airQualityUpdatedAt,
       }),
     }

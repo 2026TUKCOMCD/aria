@@ -18,7 +18,7 @@ const SettingsPage = () => {
   const [isSleepOpen, setIsSleepOpen] = useState(false);
 
   // 환경 변수 불러오기
-  const ROBOT_ID = import.meta.env.VITE_ROBOT_ID || authRobotId || "1";
+  const ROBOT_ID = authRobotId || import.meta.env.VITE_ROBOT_ID || "1";
 
   // --- [추가] 초기화 버튼 클릭 시 모달을 여는 함수 ---
   const handleOpenReset = (type: ModalType) => {

@@ -98,9 +98,10 @@ export interface RobotStatusSummary {
 
 export interface AuthVerifyResult {
   valid: boolean;
-  robot_id: string;
-  user_name: string;
-  robot_name: string;
+  robot_id?: string;
+  user_name?: string;
+  robot_name?: string;
+  message?: string;
 }
 
 export interface RobotSchedulePayload {
@@ -114,6 +115,13 @@ export interface RobotEventLog {
   event_type?: string;
   message: string;
   created_at: string;
+}
+
+export interface RobotDockLocation {
+  x: number;
+  y: number;
+  theta?: number;
+  updated_at?: string;
 }
 
 const API_BASE_URL = import.meta.env.VITE_ARIA_API_URL || 'http://localhost:3000';
@@ -230,6 +238,7 @@ export const verifyQrToken = async (token: string): Promise<AuthVerifyResult> =>
   const response = await axios.get(`${API_BASE_URL}/auth/verify`, {
     headers: createTokenHeaders(token),
     timeout: REQUEST_TIMEOUT_MS,
+    validateStatus: (status) => status >= 200 && status < 500,
   });
   return response.data;
 };
@@ -283,6 +292,30 @@ export const saveRobotZones = async (robotId: string | undefined, zones: RobotZo
     { zones: payload },
     { headers: authHeaders, timeout: REQUEST_TIMEOUT_MS }
   );
+  return response.data;
+};
+
+export const fetchRobotDock = async (robotId?: string): Promise<RobotDockLocation | null> => {
+  const targetId = getRobotId(robotId);
+  const response = await axios.get(`${API_BASE_URL}/robots/${targetId}/dock`, {
+    headers: authHeaders,
+    timeout: REQUEST_TIMEOUT_MS,
+    validateStatus: (status) => (status >= 200 && status < 300) || status === 404,
+  });
+
+  if (response.status === 404) return null;
+  return response.data.dock || response.data.charger_position || response.data;
+};
+
+export const saveRobotDock = async (
+  robotId: string | undefined,
+  payload: RobotDockLocation
+) => {
+  const targetId = getRobotId(robotId);
+  const response = await axios.put(`${API_BASE_URL}/robots/${targetId}/dock`, payload, {
+    headers: authHeaders,
+    timeout: REQUEST_TIMEOUT_MS,
+  });
   return response.data;
 };
 
