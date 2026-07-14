@@ -367,7 +367,7 @@ export const fetchRobotDock = async (robotId?: string): Promise<RobotDockLocatio
   });
 
   if (response.status === 404) return null;
-  return response.data.dock || response.data.charger_position || response.data;
+  return response.data.data || response.data.dock || response.data.charger_position || response.data;
 };
 
 export const saveRobotDock = async (
@@ -375,7 +375,7 @@ export const saveRobotDock = async (
   payload: RobotDockLocation
 ) => {
   const targetId = getRobotId(robotId);
-  const response = await axios.put(`${API_BASE_URL}/robots/${targetId}/dock`, payload, {
+  const response = await axios.post(`${API_BASE_URL}/robots/${targetId}/dock`, payload, {
     headers: createAuthHeaders(),
     timeout: REQUEST_TIMEOUT_MS,
   });
