@@ -185,9 +185,7 @@ const createAuthHeaders = () => {
 };
 
 const createTokenHeaders = (token: string) => ({
-  'Content-Type': 'application/json',
   Authorization: `Bearer ${token}`,
-  'X-ARIA-QR-TOKEN': token,
 });
 
 const parseJsonString = <T>(value: string): T | null => {
