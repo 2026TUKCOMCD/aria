@@ -18,10 +18,17 @@ const EVENT_STREAM_URL =
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const isLoggedIn = useAuthStore((state) => state.isLoggedIn);
+  const mapData = useRobotStore((state) => state.mapData);
+  const isChargerSetupComplete = useRobotStore((state) => state.isChargerSetupComplete);
+  const isChargerSetupRequired = useRobotStore((state) => state.isChargerSetupRequired);
   const location = useLocation();
 
   if (!isLoggedIn) {
     return <Navigate to="/auth" replace state={{ from: location.pathname }} />;
+  }
+
+  if (mapData && (!isChargerSetupComplete || isChargerSetupRequired) && location.pathname !== '/map') {
+    return <Navigate to="/map" replace state={{ requireChargerSetup: true }} />;
   }
 
   return children;

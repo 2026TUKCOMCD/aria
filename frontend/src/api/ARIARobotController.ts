@@ -185,9 +185,7 @@ const createAuthHeaders = () => {
 };
 
 const createTokenHeaders = (token: string) => ({
-  'Content-Type': 'application/json',
   Authorization: `Bearer ${token}`,
-  'X-ARIA-QR-TOKEN': token,
 });
 
 const parseJsonString = <T>(value: string): T | null => {
@@ -397,7 +395,30 @@ export const fetchRobotStatus = async (robotId?: string): Promise<RobotStatusSum
     headers: createAuthHeaders(),
     timeout: REQUEST_TIMEOUT_MS,
   });
-  return response.data;
+  const data = response.data || {};
+  const robotStatus = data.robot_status || {};
+  const airQuality = data.air_quality || {};
+  const sensors = airQuality.sensors || {};
+
+  return {
+    robot_status: {
+      battery: Number(robotStatus.battery ?? 100),
+      is_charging: Boolean(robotStatus.is_charging),
+      power: robotStatus.power || 'OFF',
+      mode: robotStatus.mode || 'MANUAL',
+      current_zone: robotStatus.current_zone ?? null,
+    },
+    air_quality: {
+      score: Number(airQuality.score ?? 0),
+      grade: airQuality.grade || 'NORMAL',
+      sensors: {
+        pm25: Number(sensors.pm25 ?? 0),
+        voc: Number(sensors.voc ?? 0),
+        temperature: Number(sensors.temperature ?? 0),
+        humidity: Number(sensors.humidity ?? 0),
+      },
+    },
+  };
 };
 
 export const saveRobotSchedule = async (

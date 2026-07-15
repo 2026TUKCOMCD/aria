@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import CheckIcon from '../assets/check.svg?react';
 import MapIcon from '../assets/map.svg?react';
 import AIIcon from '../assets/ai.svg?react';
@@ -42,6 +43,10 @@ const airGradeConfig = {
   CRITICAL: { label: '위험', className: 'bg-red-600 text-white' },
 };
 
+const getAirGradeConfig = (grade?: string) => {
+  return airGradeConfig[grade as keyof typeof airGradeConfig] || airGradeConfig.NORMAL;
+};
+
 const MainPage = () => {
   const {
     logs,
@@ -58,6 +63,7 @@ const MainPage = () => {
     loadMapData,
     loadZones,
     loadRobotStatus,
+    resetChargerSetup,
     robotStatusSummary,
     robotStatusError,
   } = useRobotStore();
@@ -68,8 +74,10 @@ const MainPage = () => {
 
   const authRobotId = useAuthStore((state) => state.robotId);
   const robotId = authRobotId || import.meta.env.VITE_ROBOT_ID || '1';
+  const navigate = useNavigate();
   const hasMapData = Boolean(mapData);
   const metadata = mapData?.metadata;
+  const currentAirGrade = getAirGradeConfig(robotStatusSummary?.air_quality?.grade);
 
   const selectedZone = useMemo(
     () => zones.find((zone) => zone.id === selectedZoneId) || zones[0] || null,
@@ -151,7 +159,9 @@ const MainPage = () => {
     if (!hasMapData) {
       try {
         await sendRobotCommand(robotId, 'SLAM', 'ON');
-        alert('맵 데이터 생성을 시작합니다. 생성 후 맵 새로고침을 눌러주세요.');
+        resetChargerSetup();
+        alert('맵 데이터 생성을 시작합니다. 생성 후 충전기 위치를 설정해주세요.');
+        navigate('/map', { state: { requireChargerSetup: true } });
       } catch (error) {
         console.error('맵 생성 시작 실패:', error);
         alert('맵 생성 명령을 전달하지 못했습니다.');
@@ -271,9 +281,9 @@ const MainPage = () => {
                 {robotStatusSummary.air_quality.score}
               </span>
               <span className={`mt-2 rounded-full px-3 py-1 text-[12px] font-black ${
-                airGradeConfig[robotStatusSummary.air_quality.grade].className
+                currentAirGrade.className
               }`}>
-                {airGradeConfig[robotStatusSummary.air_quality.grade].label}
+                {currentAirGrade.label}
               </span>
             </div>
 

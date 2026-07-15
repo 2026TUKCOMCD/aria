@@ -49,6 +49,8 @@ interface RobotState {
   chargerPosition: ZonePoint | null;
   airQualityUpdatedAt: string | null;
   airQualityError: string | null;
+  isChargerSetupComplete: boolean;
+  isChargerSetupRequired: boolean;
   isMapLoading: boolean;
   mapError: string | null;
 
@@ -68,6 +70,8 @@ interface RobotState {
   updateZone: (zone: RobotZone) => void;
   removeZone: (zoneId: number) => void;
   setChargerPosition: (position: ZonePoint | null) => void;
+  confirmChargerSetup: () => void;
+  resetChargerSetup: () => void;
   saveChargerPosition: (robotId?: string) => Promise<void>;
   saveZones: (robotId?: string) => Promise<void>;
 }
@@ -97,6 +101,8 @@ const useRobotStore = create<RobotState>()(
       chargerPosition: null,
       airQualityUpdatedAt: null,
       airQualityError: null,
+      isChargerSetupComplete: false,
+      isChargerSetupRequired: false,
       isMapLoading: false,
       mapError: null,
 
@@ -198,11 +204,15 @@ const useRobotStore = create<RobotState>()(
         try {
           const dock = await fetchRobotDock(robotId);
           if (!dock) return;
+          const shouldKeepSetupRequired = get().isChargerSetupRequired;
+          if (shouldKeepSetupRequired) return;
+
           set({
             chargerPosition: {
               x: dock.x,
               y: dock.y,
             },
+            isChargerSetupComplete: true,
           });
         } catch (error) {
           console.error('충전기 위치 조회 실패:', error);
@@ -224,7 +234,21 @@ const useRobotStore = create<RobotState>()(
         zoneAirQuality: state.zoneAirQuality.filter((item) => item.zone_id !== zoneId),
       })),
 
-      setChargerPosition: (position) => set({ chargerPosition: position }),
+      setChargerPosition: (position) => set({
+        chargerPosition: position,
+        isChargerSetupComplete: false,
+      }),
+
+      confirmChargerSetup: () => set({
+        isChargerSetupComplete: true,
+        isChargerSetupRequired: false,
+      }),
+
+      resetChargerSetup: () => set({
+        chargerPosition: null,
+        isChargerSetupComplete: false,
+        isChargerSetupRequired: true,
+      }),
 
       saveChargerPosition: async (robotId) => {
         const chargerPosition = get().chargerPosition;
@@ -269,6 +293,8 @@ const useRobotStore = create<RobotState>()(
         zones: state.zones,
         zoneAirQuality: state.zoneAirQuality,
         chargerPosition: state.chargerPosition,
+        isChargerSetupComplete: state.isChargerSetupComplete,
+        isChargerSetupRequired: state.isChargerSetupRequired,
         airQualityUpdatedAt: state.airQualityUpdatedAt,
       }),
     }
