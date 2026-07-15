@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState, type MouseEvent } from 'react';
+import { useLocation } from 'react-router-dom';
 import CheckIcon from '../assets/check.svg?react';
 import MapIcon from '../assets/map.svg?react';
 import Navigation from '../components/Navigation';
@@ -64,13 +65,18 @@ const MapPage = () => {
     loadChargerPosition,
     updateZone,
     setChargerPosition,
+    isChargerSetupComplete,
+    isChargerSetupRequired: shouldForceChargerSetup,
+    confirmChargerSetup,
     saveChargerPosition,
     saveZones,
   } = useRobotStore();
 
   const authRobotId = useAuthStore((state) => state.robotId);
   const robotId = authRobotId || import.meta.env.VITE_ROBOT_ID || '1';
+  const location = useLocation();
   const metadata = mapData?.metadata;
+  const isChargerSetupRequired = Boolean(mapData && (!isChargerSetupComplete || shouldForceChargerSetup));
   const displayZones = useMemo(() => {
     const mapZones = mapData?.zones || [];
     if (mapZones.length === 0) return zones;
@@ -97,6 +103,13 @@ const MapPage = () => {
     loadZoneAirQuality(robotId);
     loadChargerPosition(robotId);
   }, [loadChargerPosition, loadMapData, loadZoneAirQuality, loadZones, robotId]);
+
+  useEffect(() => {
+    if (location.state?.requireChargerSetup || isChargerSetupRequired) {
+      setEditMode('CHARGER');
+      setSelectedZoneId(null);
+    }
+  }, [isChargerSetupRequired, location.state]);
 
   const worldSize = useMemo(() => {
     if (!metadata) return null;
@@ -216,18 +229,31 @@ const MapPage = () => {
   };
 
   const handleSaveZones = async () => {
+    if (isChargerSetupRequired && !chargerPosition) {
+      alert('먼저 맵에서 충전기 위치를 선택해주세요.');
+      setEditMode('CHARGER');
+      return;
+    }
+
     setIsSaving(true);
 
     try {
       await saveZones(robotId);
       if (chargerPosition) {
         await saveChargerPosition(robotId);
+        const isRobotOnCharger = window.confirm(
+          `충전위치 설정을 완료했습니다.\n충전기 위치: x ${chargerPosition.x.toFixed(2)}, y ${chargerPosition.y.toFixed(2)}\n\n공기청정기가 충전위치에 있습니까?`
+        );
+
+        if (isRobotOnCharger) {
+          confirmChargerSetup();
+          alert('충전위치 설정이 완료되었습니다. 이제 다른 페이지로 이동할 수 있습니다.');
+        } else {
+          alert('공기청정기를 충전위치에 둔 뒤 다시 현재 상태 저장을 눌러주세요.');
+        }
+        return;
       }
-      alert(
-        chargerPosition
-          ? `구역 정보와 충전기 위치가 저장되었습니다.\n충전기 위치: x ${chargerPosition.x.toFixed(2)}, y ${chargerPosition.y.toFixed(2)}`
-          : '구역 정보가 저장되었습니다.'
-      );
+      alert('구역 정보가 저장되었습니다.');
     } catch (error) {
       console.error('구역 정보 저장 실패:', error);
       if (error && typeof error === 'object' && 'response' in error) {
@@ -275,7 +301,7 @@ const MapPage = () => {
   };
 
   const robotPoint = robotPosition ? worldToPercent(robotPosition, true) : null;
-  const chargerPoint = chargerPosition ? worldToPercent(chargerPosition, true) : null;
+  const chargerPoint = chargerPosition && editMode !== 'CHARGER' ? worldToPercent(chargerPosition, true) : null;
 
   return (
     <div className="flex min-h-screen flex-col pb-[100px] font-sans">
@@ -295,12 +321,16 @@ const MapPage = () => {
           <div className="flex h-[65px] w-full items-center rounded-[25px] bg-white p-1.5">
             <button
               type="button"
-              onClick={() => setEditMode('ZONE_NAME')}
+              disabled={isChargerSetupRequired}
+              onClick={() => {
+                if (isChargerSetupRequired) return;
+                setEditMode('ZONE_NAME');
+              }}
               className={`flex h-full flex-1 items-center justify-center gap-2 rounded-[20px] text-[18px] font-black transition-all ${
                 editMode === 'ZONE_NAME'
                   ? 'bg-main-blue text-white shadow-md'
                   : 'text-gray-400'
-              }`}
+              } ${isChargerSetupRequired ? 'cursor-not-allowed opacity-50' : ''}`}
             >
               구역 이름 설정
               {editMode === 'ZONE_NAME' && <CheckIcon className="h-5 w-5 fill-current" />}
