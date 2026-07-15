@@ -86,8 +86,15 @@ myMQTTClient.configureAutoReconnectBackoffTime(1, 32, 20)
 myMQTTClient.configureConnectDisconnectTimeout(10)
 myMQTTClient.configureMQTTOperationTimeout(5)
 
-if myMQTTClient.connect():
-    print("AWS IoT Core 연결 완료")
+#LWT 설정
+lwt_topic = f"aria/{CLIENT_ID}/presence"
+lwt_payload = json.dumps({"status": "Offline", "reason": "Connection Lost"})
+myMQTTClient.configureLastWill(lwt_topic, lwt_payload, 1)
+
+#Keep Alive Signal 설정
+KEEP_ALIVE_SEC = 60
+if myMQTTClient.connect(keepAliveIntervalSecs=KEEP_ALIVE_SEC):
+    print("AWS IoT Core 연결 완료 (Keep-Alive 및 LWT 활성화)")
 else:
     print("연결 실패")
     exit()
