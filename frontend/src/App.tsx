@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+﻿import { useEffect } from 'react';
 import { BrowserRouter as Router, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 
 import MainPage from './pages/MainPage';
@@ -38,30 +38,50 @@ const AppShell = () => {
   const location = useLocation();
   const isLoggedIn = useAuthStore((state) => state.isLoggedIn);
   const authRobotId = useAuthStore((state) => state.robotId);
+  const qrToken = useAuthStore((state) => state.qrToken);
   const robotId = authRobotId || import.meta.env.VITE_ROBOT_ID || '1';
   const { addLog, setIsRunning, setRobotPosition } = useRobotStore();
   const shouldShowNavigation = isLoggedIn && !location.pathname.startsWith('/auth');
 
   useEffect(() => {
-    if (!isLoggedIn) return;
+    if (!isLoggedIn || !qrToken) return;
 
-    const eventSource = new EventSource(`${EVENT_STREAM_URL}/robots/${robotId}/events/stream`);
+    const eventSource = new EventSource(
+      `${EVENT_STREAM_URL}/robots/${robotId}/events/stream?token=${encodeURIComponent(qrToken)}`
+    );
 
     const handleAlertEvent = (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data);
-        const logMessage = data.message || '이벤트가 발생했습니다.';
+        const eventType = data.event || data.type || data.event_type;
+        const status = data.status;
+        const logMessage =
+          data.message ||
+          (eventType === 'clean_status' && status === 'COMPLETE'
+            ? '청정이 완료되었습니다.'
+            : eventType === 'lwt_status' || status === 'Offline'
+              ? '로봇 연결이 비정상적으로 종료되었습니다.'
+              : '이벤트가 발생했습니다.');
+
         addLog(logMessage);
 
-        if (data.type === 'EMERGENCY' || data.event_type === 'EMERGENCY') {
-          alert(`[긴급] ${logMessage}`);
+        if (eventType === 'clean_status' && status === 'COMPLETE') {
+          setIsRunning(false);
+          alert(logMessage);
+        }
+
+        if (eventType === 'lwt_status' || status === 'Offline' || data.type === 'EMERGENCY' || data.event_type === 'EMERGENCY') {
+          setIsRunning(false);
+          alert(logMessage);
         }
       } catch (error) {
         console.error('SSE 이벤트 파싱 실패:', error);
       }
     };
 
+    eventSource.addEventListener('connected', handleAlertEvent);
     eventSource.addEventListener('clean_status', handleAlertEvent);
+    eventSource.addEventListener('lwt_status', handleAlertEvent);
     eventSource.addEventListener('robot_alert', handleAlertEvent);
 
     eventSource.addEventListener('status_change', (event) => {
@@ -103,7 +123,7 @@ const AppShell = () => {
     return () => {
       eventSource.close();
     };
-  }, [addLog, isLoggedIn, robotId, setIsRunning, setRobotPosition]);
+  }, [addLog, isLoggedIn, qrToken, robotId, setIsRunning, setRobotPosition]);
 
   return (
     <div className="min-h-screen bg-gray-200 flex justify-center items-center">

@@ -380,13 +380,8 @@ export const saveRobotDock = async (
   return response.data;
 };
 
-export const fetchZoneAirQuality = async (robotId?: string): Promise<ZoneAirQuality[]> => {
-  const targetId = getRobotId(robotId);
-  const response = await axios.get(`${API_BASE_URL}/robots/${targetId}/air-quality/zones`, {
-    headers: createAuthHeaders(),
-    timeout: REQUEST_TIMEOUT_MS,
-  });
-  return response.data.zones || [];
+export const fetchZoneAirQuality = async (_robotId?: string): Promise<ZoneAirQuality[]> => {
+  return [];
 };
 
 export const fetchRobotStatus = async (robotId?: string): Promise<RobotStatusSummary> => {
