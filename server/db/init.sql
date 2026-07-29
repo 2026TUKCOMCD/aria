@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS robot_status_log (
     power_status    VARCHAR(20),       -- ON, OFF, SLEEP
     operation_mode  VARCHAR(20),       -- AUTO, MANUAL, TURBO
     current_zone    VARCHAR(50),       -- 거실, 주방 등
+    movement_status VARCHAR(20),
     
     -- [Air Quality]
     air_score       INTEGER,           -- 종합 점수
@@ -75,3 +76,66 @@ ON robot_status_log (robot_id, time DESC);
 
 -- 웹앱 모니터링 데이터는 영원히 가지고 있을 필요가 없으므로, 1주일(7 days) 지난 데이터는 자동 삭제하여 용량을 관리
 SELECT add_retention_policy('robot_status_log', INTERVAL '7 days');
+
+-- =========================================================
+-- [PART 4] 맵 데이터 저장 (S3 연동) - 이슈 #131
+-- =========================================================
+
+CREATE TABLE IF NOT EXISTS robot_maps (
+    map_id          SERIAL PRIMARY KEY,
+    robot_id        VARCHAR(50) NOT NULL,
+    map_name        VARCHAR(100),       -- 지도 이름 (예: 거실_최종)
+    s3_url          TEXT NOT NULL,      -- S3 이미지 주소
+    
+    -- [Map Metadata]
+    resolution      FLOAT,              -- 0.05 (m/pixel)
+    width           INTEGER,            -- 이미지 가로 크기
+    height          INTEGER,            -- 이미지 세로 크기
+    origin_x        FLOAT,              -- 원점 X
+    origin_y        FLOAT,              -- 원점 Y
+    origin_theta    FLOAT,              -- 원점 회전각
+    
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 로봇별로 최신 지도를 빨리 찾기 위한 인덱스
+CREATE INDEX IF NOT EXISTS idx_robot_maps_robot_id ON robot_maps(robot_id, created_at DESC);
+
+-- =========================================================
+-- [PART 5] 구역 관리를 위한 테이블 - 이슈#132
+-- =========================================================
+
+CREATE TABLE robot_zones (
+    zone_id SERIAL PRIMARY KEY,
+    robot_id VARCHAR(50) NOT NULL,
+    zone_name VARCHAR(50) NOT NULL,
+    center_data JSONB NOT NULL,
+    area_data JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 2. 로봇 ID와 방 이름의 조합을 '고유값'으로 묶기 
+ALTER TABLE robot_zones ADD CONSTRAINT unique_robot_zone_name UNIQUE (robot_id, zone_name);
+
+-- =========================================================
+-- [PART 6] 이벤트 로그 테이블 - issue #128
+-- =========================================================
+
+CREATE TABLE robot_event_logs (
+    log_id SERIAL PRIMARY KEY,
+    robot_id VARCHAR(50) NOT NULL,
+    event_type VARCHAR(20) NOT NULL,
+    message TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+  
+-- =========================================================
+-- [PART 7] 기상/취침 스케줄 관리를 위한 table- 이슈#184
+-- =========================================================
+
+CREATE TABLE IF NOT EXISTS robot_schedules (
+    robot_id VARCHAR(50) PRIMARY KEY,
+    wake_time VARCHAR(5),
+    sleep_time VARCHAR(5),
+    is_enabled BOOLEAN,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
