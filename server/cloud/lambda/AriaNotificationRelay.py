@@ -15,7 +15,8 @@ def lambda_handler(event, context):
             raise ValueError("환경변수 'EC2_IP'가 설정되지 않았습니다!")
 
         # 2. URL 조립
-        ec2_url = f"http://{ec2_ip}:3000/api/alert"
+        ec2_ip = os.environ.get('EC2_IP')
+        ec2_url = f"{ec2_ip}/api/alert"
         
         print(f"Target URL: {ec2_url}")
         print("IoT Core 이벤트 수신:", event)
