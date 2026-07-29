@@ -58,8 +58,20 @@ def lambda_handler(event, context):
         voc = event.get('voc', 0) # DB 스키마에 맞춰 INT/FLOAT 확인 (init.sql에선 INT였음)
         
         # 공기질 점수
-        air_score = event.get('air_score', 0)
-        air_grade = event.get('air_grade', 'UNKNOWN')
+        air_score = int(event.get('air_score', 0))
+        air_grade = event.get('air_grade', '좋음')
+
+        # 좌표 데이터
+        pose_x = float(event.get('pose_x', 0.0))
+        pose_y = float(event.get('pose_y', 0.0))
+        pose_theta = float(event.get('pose_theta', 0.0))
+
+        # 만약 원본 형태("pose": {"x": 1})로 들어올 경우를 대비한 방어 코드
+        pose = event.get('pose')
+        if isinstance(pose, dict):
+            pose_x = float(pose.get('x', pose_x))
+            pose_y = float(pose.get('y', pose_y))
+            pose_theta = float(pose.get('theta', pose_theta))
 
         # 3. SQL 쿼리 작성 (robot_status_log 테이블)
         # time 컬럼에는 to_timestamp()를 사용하여 유닉스 타임스탬프를 DB 시간 포맷으로 변환
@@ -68,12 +80,14 @@ def lambda_handler(event, context):
                 time, robot_id, 
                 battery, is_charging, power_status, operation_mode, 
                 temperature, humidity, pm25, voc, 
+                pose_x, pose_y, pose_theta,
                 air_score, air_grade
             )
             VALUES (
                 to_timestamp(%s / 1000.0), %s, 
                 %s, %s, %s, %s, 
                 %s, %s, %s, %s, 
+                %s, %s, %s,
                 %s, %s
             );
         """
@@ -89,7 +103,7 @@ def lambda_handler(event, context):
         ))
         
         conn.commit()
-        print(f" Status data saved for {robot_id}")
+        print(f"Status data saved for {robot_id} (Location: {pose_x}, {pose_y})")
         
         return {'statusCode': 200, 'body': json.dumps('Status Saved!')}
 
