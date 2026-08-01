@@ -114,16 +114,20 @@ app.get('/robots/:id/events/stream', async (req, res) => {
 app.post('/api/alert', async (req, res) => {
     const alertData = req.body;
     console.log('Lambda 알림 수신:', alertData);
-
-    try {
+    
+    try {            
         io.emit('robot_alert', alertData);
-        broadcastSseEvent(String(alertData.robot_id || '*'), alertData.event || 'clean_status', {
+        
+        // 핵심 수정: 로봇 ID가 없으면 기본값 '1'로 강제 매핑하여 클라이언트 방과 일치시킴
+        const targetRobotId = String(alertData.robot_id || '1');
+
+        broadcastSseEvent(targetRobotId, alertData.event || 'clean_status', {
             type: alertData.type || alertData.event_type || 'INFO',
             timestamp: alertData.timestamp || new Date().toISOString(),
             message: alertData.message || '이벤트가 발생했습니다.',
             ...alertData
         });
-
+    
         res.status(200).json({
             success: true,
             message: '알림을 웹 클라이언트로 전송했습니다.'
@@ -136,6 +140,7 @@ app.post('/api/alert', async (req, res) => {
         });
     }
 });
+
 
 app.get('/api/events', async (req, res) => {
     const robotId = req.query.robot_id || 'aria_robot01';
