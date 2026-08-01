@@ -3,26 +3,27 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
 
-# 환경변수에서 DB 연결 정보 로드 (값이 없을 경우를 대비한 기본값 설정 가능)
 DB_HOST = os.environ.get("DB_HOST")
-DB_NAME = os.environ.get("DB_NAME", "postgres") # 기본값 postgres
+DB_NAME = os.environ.get("DB_NAME", "postgres")
 DB_USER = os.environ.get("DB_USER", "aria_lambda")
 DB_PASS = os.environ.get("DB_PASS")
 
-def api_verify_token(request_headers):
-    conn = None
+def lambda_handler(event, context):
     try:
-        # 1. Header에서 토큰 추출
-        token = request_headers.get('Authorization') or request_headers.get('authorization')
+        # 1. Payload v2.0에서는 토큰이 headers 안에 소문자로 들어옵니다.
+        headers = event.get('headers', {})
+        auth_header = headers.get('authorization', '') 
         
-        if not token:
-            return build_response(400, {"valid": False, "message": "토큰이 누락되었습니다."})
+        # 토큰이 없으면 즉시 거부 (isAuthorized: False)
+        if not auth_header:
+            return {"isAuthorized": False}
 
-        # "Bearer 랜덤토큰" 형태 처리
-        if token.startswith("Bearer "):
-            token = token.split(" ")[1]
+        if auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+        else:
+            token = auth_header
 
-        # 2. PostgreSQL DB 연결 (네트워크 타임아웃 5초 설정)
+        # 2. DB 연결
         conn = psycopg2.connect(
             host=DB_HOST, 
             database=DB_NAME, 
@@ -32,7 +33,7 @@ def api_verify_token(request_headers):
         )
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
-        # 3. SQL 쿼리 실행
+        # 3. 쿼리 실행
         query = """
             SELECT robot_id, user_name, robot_name, is_valid 
             FROM aria_qr_tokens 
@@ -41,36 +42,28 @@ def api_verify_token(request_headers):
         cursor.execute(query, (token,))
         item = cursor.fetchone()
 
-        # 4. 검증 및 응답 데이터 조립
-        if item:
-            if item['is_valid']:
-                return build_response(200, {
-                    "valid": True,
-                    "robot_id": item['robot_id'],
-                    "user_name": item['user_name'],
-                    "robot_name": item['robot_name']
-                })
-            else:
-                return build_response(401, {"valid": False, "message": "이미 사용되거나 만료된 토큰입니다."})
+        # 4. 검증 및 '단순' 응답 반환 (스크린샷 설정에 완벽히 호환)
+        if item and item['is_valid']:
+            # 성공 시: true 반환 및 ARIA 로봇 제어 람다로 정보 넘기기
+            return {
+                "isAuthorized": True,
+                "context": {
+                    "robot_id": str(item['robot_id']),
+                    "user_name": str(item['user_name']),
+                    "robot_name": str(item['robot_name'])
+                }
+            }
         else:
-            return build_response(404, {"valid": False, "message": "유효하지 않은 QR 코드입니다."})
+            # 실패 시: false 반환 (자동으로 403 Forbidden 처리됨)
+            return {"isAuthorized": False}
 
     except Exception as e:
-        print(f"DB Error: {e}")
-        return build_response(500, {"valid": False, "message": "내부 서버 오류가 발생했습니다."})
+        print(f"Authorizer Error: {e}")
+        # DB 에러 등 서버 내부 문제 시에도 안전하게 접근 차단
+        return {"isAuthorized": False}
         
     finally:
-        # DB 연결 자원 해제
-        if conn:
+        if 'cursor' in locals() and cursor:
             cursor.close()
+        if 'conn' in locals() and conn:
             conn.close()
-
-def build_response(status_code, body):
-    return {
-        "statusCode": status_code,
-        "headers": {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*" # 웹앱(프론트엔드) 통신을 위한 CORS 허용
-        },
-        "body": json.dumps(body)
-    }
