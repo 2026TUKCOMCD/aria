@@ -21,16 +21,16 @@ from skimage.segmentation import watershed
 # 기본 경로 / 환경변수 설정
 # ==============================
 
-current_file = Path(__file__).resolve()
+# 이 파일은 ros2_last/src/upload_map_with_zones.py 에 위치하지만,
+# .env(ARIA_API_URL 등)는 별도의 aria 프로젝트 루트에 있고 저장된 맵은
+# ros2_last/maps 에 있다 — 서로 다른 두 트리라 __file__ 상대경로로는
+# 유도할 수 없으므로 다른 ARIA 노드들과 동일한 관례(ARIA_PROJECT_ROOT/
+# ARIA_MAPS_DIR 환경변수, 기본값은 배포 경로)를 그대로 따른다.
+PROJECT_ROOT = Path(os.environ.get("ARIA_PROJECT_ROOT", "/srv/aria/users/hs/aria"))
+MAPS_DIR = Path(os.environ.get("ARIA_MAPS_DIR", "/srv/aria/users/hs/ros2_last/maps"))
+MAPS_DIR.mkdir(parents=True, exist_ok=True)
 
-# 현재 파일 위치 예:
-# /srv/aria/users/hs/aria/robot/src/upload_map_with_zones.py
-# project_root = /srv/aria/users/hs/aria
-project_root = current_file.parent.parent.parent
-
-load_dotenv(dotenv_path=project_root / ".env")
-
-MAPS_DIR = project_root / "robot" / "maps"
+load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
 
 API_BASE_URL = os.environ.get("ARIA_API_URL")
 ROBOT_ID = os.environ.get("ROBOT_ID", "1")
@@ -50,8 +50,8 @@ MAX_RETRIES = 3
 # 여기서는 확실한 흰색 영역만 free로 판단
 FREE_PIXEL_THRESH = 250
 
-MIN_DISTANCE = 40          # px, 구역 씨앗 간 최소 거리
-MIN_ZONE_AREA_M2 = 1.0    # m², 너무 작은 구역 제거
+MIN_DISTANCE = 12          # px, 구역 씨앗 간 최소 거리
+MIN_ZONE_AREA_M2 = 0.2    # m², 너무 작은 구역 제거
 
 
 # ==============================

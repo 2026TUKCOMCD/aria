@@ -1,4 +1,4 @@
-lifecycle_manager:
+lifecycle_manager_localization:
   ros__parameters:
     use_sim_time: false
     autostart: true

@@ -1,0 +1,31 @@
+ekf_filter_node:
+  ros__parameters:
+    use_sim_time: false
+
+    frequency: 30.0          # 1초에 30번씩 위치 계산
+    two_d_mode: true         # 2D 평면 주행 모드 (Z축 오차 억제)
+    publish_tf: true         # 직접 odom -> base_link TF를 발행하라!
+
+    # 프레임 설정
+    frame_id: odom
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom
+
+    # IMU 데이터 사용 설정 (Z축 회전각 중심)
+    imu0: /imu/data
+    imu0_config: [false, false, false,
+                  false, false, false, # roll, pitch, yaw만 사용
+                  false, false, false,
+                  false, false, true, # 각속도(z) 사용
+                  false, false, false]
+    imu0_differential: false
+
+    # 오도메트리 데이터 사용
+    odom0: /odom
+    odom0_config: [true, true, false,
+                   false, false, true, # x, y, yaw만 사용
+                   true, true, false,
+                   false, false, true,
+                   false, false, false]

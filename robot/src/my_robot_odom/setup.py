@@ -24,7 +24,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
-		'esp32_wheel_odom_node = my_robot_odom.esp32_wheel_odom_node:main'
+		'esp32_wheel_odom_node = my_robot_odom.esp32_wheel_odom_node:main',
+        'esp32_serial_bridge_node = my_robot_odom.esp32_serial_bridge_node:main',
         ],
     },
 )

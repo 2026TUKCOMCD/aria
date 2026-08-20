@@ -14,8 +14,8 @@ from skimage.segmentation import watershed
 _MAP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'maps')
 
 # ── 설정 ──────────────────────────────────────────────────────────────────
-MAP_PGM  = os.path.join(_MAP_DIR, "aria_map_clean.pgm")
-MAP_YAML = os.path.join(_MAP_DIR, "aria_map_clean.yaml")
+MAP_PGM  = os.path.join(_MAP_DIR, "map_with_doors.pgm")
+MAP_YAML = os.path.join(_MAP_DIR, "map_with_doors.yaml")
 OUT_PATH = os.path.join(_MAP_DIR, "zone_result.png")
 
 RESOLUTION   = 0.02   # m/px

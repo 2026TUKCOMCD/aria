@@ -1,19 +1,42 @@
 slam_toolbox:
   ros__parameters:
+
+    # 1. 시간 및 프레임 설정
     use_sim_time: false
-
-    scan_topic: /scan
     map_frame: map
-    odom_frame: odom
-
+    odom_frame: odom        # ESP32 오도메트리를 사용하므로 반드시 odom
     base_frame: base_footprint
-    transform_timeout: 3.0
-    throttle_scans: 1
-    scan_queue_size: 200
+    scan_topic: /scan
 
+    # 2. QoS 설정 (라이다 경고 해결용)
+    scan_qos:
+      reliability: best_effort
+      durability: volatile
+      history: keep_last
+      depth: 5
+
+    # 3. 매핑 해상도 및 업데이트 주기
+    # 넓은 공간 매핑을 위해 해상도를 0.05(5cm)로 조정했습니다.
+    mode: mapping
     map_update_interval: 1.0
-    resolution: 0.02
-
+    resolution: 0.05
+    
+    # 4. 이동 감지 임계값
+    # 너무 민감하면 지도가 떨리므로 적정 수준(5cm, 2도)으로 설정했습니다.
     minimum_time_interval: 0.1
-    minimum_travel_distance: 0.02
-    minimum_travel_heading: 0.02
+    minimum_travel_distance: 0.05
+    minimum_travel_heading: 0.035 # 약 2도
+
+    # 5. 기타 성능 파라미터
+    transform_timeout: 1.0
+    tf_buffer_duration: 30.0
+    stack_size_to_use: 40000000 # 40MB
+    enable_interactive_mode: true
+
+    # 6. 매칭 파라미터 (안정성 강화)
+    do_loop_closing: true
+    loop_search_distance: 8.0
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45

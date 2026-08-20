@@ -4,7 +4,7 @@ amcl:
 
     global_frame_id: map
     odom_frame_id: odom
-    base_frame_id: base_footprint
+    base_frame_id: base_link
     scan_topic: /scan
 
     tf_broadcast: true

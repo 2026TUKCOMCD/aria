@@ -13,6 +13,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
+        (os.path.join('lib', package_name, 'certs'), glob('robot_bringup/certs/*')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -28,6 +29,10 @@ setup(
     entry_points={
         'console_scripts': [
             'zone_segmentation_node = robot_bringup.zone_segmentation_node:main',
+            'air_purify_scheduler_node = robot_bringup.air_purify_scheduler_node:main',
+            'aria_mqtt_node = robot_bringup.aria_mqtt_node:main',
+            'aria_controller_node = robot_bringup.aria_controller_node:main',
+            'aria_cooking_ai_node = robot_bringup.aria_cooking_ai_node:main',
         ],
     },
 )
