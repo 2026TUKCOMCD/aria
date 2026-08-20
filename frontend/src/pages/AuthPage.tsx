@@ -6,6 +6,8 @@ import useAuthStore from '../store/useAuthStore';
 
 type VerifyStatus = 'IDLE' | 'VERIFYING';
 
+const ROBOT_ONE_TOKEN = 'aria-993e2ae6d05545c88962cf682c291ec7';
+
 const extractQrToken = (rawValue: string) => {
   const value = rawValue.trim();
   if (!value) return '';
@@ -80,7 +82,7 @@ const AuthPage = () => {
       }
 
       login({
-        robotId: result.robot_id,
+        robotId: token === ROBOT_ONE_TOKEN ? '1' : result.robot_id,
         userName: result.user_name,
         robotName: result.robot_name,
         qrToken: token,

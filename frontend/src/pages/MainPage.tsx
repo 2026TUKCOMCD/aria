@@ -47,6 +47,20 @@ const getAirGradeConfig = (grade?: string) => {
   return airGradeConfig[grade as keyof typeof airGradeConfig] || airGradeConfig.NORMAL;
 };
 
+const zoneAirGradeConfig = {
+  GOOD: { label: '좋음', className: 'bg-emerald-100 text-emerald-700 ring-emerald-200' },
+  NORMAL: { label: '보통', className: 'bg-amber-100 text-amber-700 ring-amber-200' },
+  BAD: { label: '나쁨', className: 'bg-red-100 text-red-700 ring-red-200' },
+  CRITICAL: { label: '위험', className: 'bg-red-600 text-white ring-red-300' },
+  STALE: { label: '지연', className: 'bg-gray-100 text-gray-500 ring-gray-200' },
+};
+
+const getZoneAirGradeConfig = (grade?: string) => {
+  return zoneAirGradeConfig[grade as keyof typeof zoneAirGradeConfig] || zoneAirGradeConfig.STALE;
+};
+
+const formatOneDecimal = (value: number) => Number(value || 0).toFixed(1);
+
 const MainPage = () => {
   const {
     logs,
@@ -63,9 +77,10 @@ const MainPage = () => {
     loadMapData,
     loadZones,
     loadRobotStatus,
-    resetChargerSetup,
+    beginSetupFlow,
     robotStatusSummary,
     robotStatusError,
+    robotPosition,
   } = useRobotStore();
 
   const [isLogOpen, setIsLogOpen] = useState(false);
@@ -110,6 +125,14 @@ const MainPage = () => {
     loadMapData(robotId);
     loadZones(robotId);
     loadRobotStatus(robotId);
+
+    const statusTimer = window.setInterval(() => {
+      loadRobotStatus(robotId);
+    }, 5000);
+
+    return () => {
+      window.clearInterval(statusTimer);
+    };
   }, [loadMapData, loadRobotStatus, loadZones, robotId]);
 
   useEffect(() => {
@@ -159,7 +182,7 @@ const MainPage = () => {
     if (!hasMapData) {
       try {
         await sendRobotCommand(robotId, 'SLAM', 'ON');
-        resetChargerSetup();
+        beginSetupFlow();
         alert('맵 데이터 생성을 시작합니다. 생성 후 충전기 위치를 설정해주세요.');
         navigate('/map', { state: { requireChargerSetup: true } });
       } catch (error) {
@@ -171,8 +194,21 @@ const MainPage = () => {
 
     try {
       if (isRunning) {
-        await sendRobotCommand(robotId, 'POWER', 'OFF');
+        const [cancelResult, waitResult] = await Promise.allSettled([
+          navigateRobot(robotId, { type: 'CANCEL_NAVIGATION' }),
+          sendRobotCommand(robotId, 'MODE', 'WAIT'),
+        ]);
+
+        if (waitResult.status === 'rejected') {
+          console.warn('대기 상태 전환 실패, 이동 취소 명령은 별도로 확인합니다:', waitResult.reason);
+        }
+
+        if (cancelResult.status === 'rejected') {
+          throw cancelResult.reason;
+        }
+
         setIsRunning(false);
+        setAiMode(false);
         return;
       }
 
@@ -182,8 +218,28 @@ const MainPage = () => {
           return;
         }
 
-        await sendRobotCommand(robotId, 'MODE', 'MANUAL');
-        await navigateRobot(robotId, { type: 'ZONE', zone_id: selectedZone.id });
+        const navigatePayload = {
+          type: 'MOVE_TO',
+          target_type: 'ZONE',
+          zone_id: selectedZone.id,
+          zone_name: selectedZone.name,
+          x: selectedZone.center.x,
+          y: selectedZone.center.y,
+          theta: 0,
+        } as const;
+        const [modeResult, navigateResult] = await Promise.allSettled([
+          sendRobotCommand(robotId, 'MODE', 'MANUAL'),
+          navigateRobot(robotId, navigatePayload),
+        ]);
+
+        if (modeResult.status === 'rejected') {
+          console.warn('기본모드 전환 실패, 이동 명령은 별도로 확인합니다:', modeResult.reason);
+        }
+
+        if (navigateResult.status === 'rejected') {
+          throw navigateResult.reason;
+        }
+
         setIsRunning(true);
         return;
       }
@@ -300,11 +356,15 @@ const MainPage = () => {
               </div>
               <div className="rounded-[14px] bg-gray-50 px-3 py-2">
                 <p className="text-[11px] font-bold text-gray-400">온도</p>
-                <p className="text-[17px] font-black text-gray-800">{robotStatusSummary.air_quality.sensors.temperature}°C</p>
+                <p className="text-[17px] font-black text-gray-800">
+                  {formatOneDecimal(robotStatusSummary.air_quality.sensors.temperature)}°C
+                </p>
               </div>
               <div className="rounded-[14px] bg-gray-50 px-3 py-2">
                 <p className="text-[11px] font-bold text-gray-400">습도</p>
-                <p className="text-[17px] font-black text-gray-800">{robotStatusSummary.air_quality.sensors.humidity}%</p>
+                <p className="text-[17px] font-black text-gray-800">
+                  {formatOneDecimal(robotStatusSummary.air_quality.sensors.humidity)}%
+                </p>
               </div>
             </div>
 
@@ -316,6 +376,12 @@ const MainPage = () => {
                 {robotStatusSummary.robot_status.is_charging ? '충전 중' : '배터리 사용 중'}
               </span>
             </div>
+
+            {robotStatusSummary.last_updated && (
+              <div className="col-span-2 rounded-[14px] bg-gray-50 px-3 py-2 text-right text-[11px] font-bold text-gray-400">
+                마지막 상태 갱신: {formatUpdatedAt(robotStatusSummary.last_updated)}
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -358,13 +424,14 @@ const MainPage = () => {
                 {!isAiMode && zones.map((zone) => {
                   const position = worldToPercent(zone.center);
                   const active = selectedZone?.id === zone.id;
+                  const zoneAirGrade = getZoneAirGradeConfig(zone.air_grade);
 
                   return (
                     <button
                       key={`map-label-${zone.id}`}
                       type="button"
                       onClick={() => setSelectedZoneId(zone.id)}
-                      className={`absolute z-10 max-w-[120px] -translate-x-1/2 -translate-y-1/2 truncate rounded-full px-3 py-1.5 text-[12px] font-black shadow-md transition-all active:scale-95 ${
+                      className={`absolute z-10 flex max-w-[120px] -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1 rounded-[14px] px-3 py-1.5 text-[12px] font-black shadow-md transition-all active:scale-95 ${
                         active
                           ? 'bg-main-blue text-white ring-2 ring-white'
                           : 'bg-white/90 text-main-blue ring-1 ring-main-blue/20'
@@ -374,26 +441,59 @@ const MainPage = () => {
                         top: `${position.top}%`,
                       }}
                     >
-                      {zone.name}
+                      <span className="max-w-[96px] truncate">{zone.name}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] ${zoneAirGrade.className}`}>
+                        {zoneAirGrade.label}
+                        {typeof zone.air_score === 'number' ? ` ${zone.air_score}` : ''}
+                      </span>
                     </button>
                   );
                 })}
+                {robotPosition && (
+                  <div
+                    className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-1/2"
+                    style={{
+                      left: `${worldToPercent(robotPosition).left}%`,
+                      top: `${worldToPercent(robotPosition).top}%`,
+                    }}
+                  >
+                    <div
+                      className="relative flex h-9 w-9 items-center justify-center rounded-full border-4 border-white bg-main-red shadow-xl"
+                      style={{ transform: `rotate(${robotPosition.theta}rad)` }}
+                    >
+                      <span className="absolute -top-3 h-4 w-2 rounded-full bg-main-red" />
+                      <span className="h-2.5 w-2.5 rounded-full bg-white" />
+                    </div>
+                    <div className="mt-1 rounded-full bg-white/95 px-2 py-0.5 text-center text-[10px] font-black text-main-red shadow">
+                      ARIA
+                    </div>
+                  </div>
+                )}
               </div>
 
               {!isAiMode && (
                 <div className="grid grid-cols-2 gap-2">
                   {zones.length > 0 ? zones.map((zone) => (
+                    (() => {
+                      const zoneAirGrade = getZoneAirGradeConfig(zone.air_grade);
+                      return (
                     <button
                       key={zone.id}
                       onClick={() => setSelectedZoneId(zone.id)}
-                      className={`h-[42px] rounded-[14px] text-[15px] font-black shadow-sm transition-all ${
+                      className={`min-h-[50px] rounded-[14px] px-2 py-1 text-[15px] font-black shadow-sm transition-all ${
                         selectedZone?.id === zone.id
                           ? 'bg-main-blue text-white'
                           : 'bg-main-sky text-main-blue'
                       }`}
                     >
-                      {zone.name}
+                      <span className="block truncate">{zone.name}</span>
+                      <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] ${zoneAirGrade.className}`}>
+                        {zoneAirGrade.label}
+                        {typeof zone.air_score === 'number' ? ` ${zone.air_score}` : ''}
+                      </span>
                     </button>
+                      );
+                    })()
                   )) : (
                     <div className="col-span-2 rounded-[14px] bg-gray-100 px-4 py-3 text-center text-[14px] font-bold text-gray-400">
                       맵 페이지에서 구역을 설정해주세요

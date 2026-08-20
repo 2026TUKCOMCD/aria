@@ -27,10 +27,12 @@ interface RobotMapResponse {
 }
 
 export interface ZoneArea {
-  x_min: number;
-  y_min: number;
-  x_max: number;
-  y_max: number;
+  x_min?: number;
+  y_min?: number;
+  x_max?: number;
+  y_max?: number;
+  width?: number;
+  height?: number;
 }
 
 export interface ZonePoint {
@@ -45,6 +47,8 @@ export interface RobotZone {
   color?: string;
   area?: ZoneArea;
   polygon?: ZonePoint[];
+  air_score?: number;
+  air_grade?: RobotAirQualityGrade | 'STALE';
 }
 
 type ZonePointResponse = ZonePoint | [number, number] | string;
@@ -56,6 +60,8 @@ interface RobotZoneResponse {
   color?: string;
   area?: ZoneArea;
   polygon?: ZonePointResponse[] | string;
+  air_score?: number;
+  air_grade?: string;
 }
 
 interface SaveRobotZonePayload {
@@ -67,6 +73,7 @@ interface SaveRobotZonePayload {
 }
 
 export type AirQualityStatus = 'GOOD' | 'NORMAL' | 'BAD' | 'STALE';
+type RobotAirQualityGrade = 'GOOD' | 'NORMAL' | 'BAD' | 'CRITICAL';
 
 export interface ZoneAirQuality {
   zone_id: number;
@@ -80,13 +87,13 @@ export interface RobotStatusSummary {
   robot_status: {
     battery: number;
     is_charging: boolean;
-    power: 'ON' | 'OFF' | 'SLEEP';
-    mode: 'AUTO' | 'MANUAL' | 'TURBO';
+    power: 'ON' | 'OFF' | 'SLEEP' | 'OFFLINE' | string;
+    mode: 'AUTO' | 'MANUAL' | 'TURBO' | 'WAIT' | 'LOW' | string;
     current_zone: string | null;
   };
   air_quality: {
     score: number;
-    grade: 'GOOD' | 'NORMAL' | 'BAD' | 'CRITICAL';
+    grade: RobotAirQualityGrade;
     sensors: {
       pm25: number;
       voc: number;
@@ -94,6 +101,12 @@ export interface RobotStatusSummary {
       humidity: number;
     };
   };
+  pose?: {
+    x: number;
+    y: number;
+    theta: number;
+  };
+  last_updated?: string;
 }
 
 export interface AuthVerifyResult {
@@ -139,9 +152,12 @@ export interface RobotSchedulePayload {
 
 export interface RobotEventLog {
   log_id?: number;
+  type?: string;
+  event?: string;
   event_type?: string;
-  message: string;
-  created_at: string;
+  message?: string;
+  timestamp?: number | string;
+  created_at?: string;
 }
 
 export interface RobotDockLocation {
@@ -160,7 +176,17 @@ const API_TOKEN = import.meta.env.VITE_API_SECRET_TOKEN;
 const DEFAULT_ID = import.meta.env.VITE_ROBOT_ID || '1';
 const REQUEST_TIMEOUT_MS = 8000;
 
-const getRobotId = (robotId?: string) => robotId || DEFAULT_ID;
+const getRobotId = (robotId?: string | null) => {
+  const value = String(robotId || '').trim();
+  if (!value) return DEFAULT_ID;
+
+  const normalized = value.toLowerCase();
+  if (normalized === 'unknown' || normalized === 'undefined' || normalized === 'null') {
+    return DEFAULT_ID;
+  }
+
+  return value;
+};
 
 const getStoredQrToken = () => {
   try {
@@ -180,12 +206,12 @@ const createAuthHeaders = () => {
   return {
     'Content-Type': 'application/json',
     ...(API_TOKEN ? { 'X-ARIA-SECRET': API_TOKEN } : {}),
-    ...(qrToken ? { Authorization: `Bearer ${qrToken}` } : {}),
+    ...(qrToken ? { Authorization: qrToken } : {}),
   };
 };
 
 const createTokenHeaders = (token: string) => ({
-  Authorization: `Bearer ${token}`,
+  Authorization: token,
 });
 
 const parseJsonString = <T>(value: string): T | null => {
@@ -222,6 +248,21 @@ const normalizeZonePolygon = (polygon?: ZonePointResponse[] | string): ZonePoint
   return polygon.map(normalizeZonePoint);
 };
 
+const normalizeZoneAirGrade = (grade: unknown): RobotZone['air_grade'] | undefined => {
+  const normalized = String(grade || '').trim().toUpperCase();
+  if (
+    normalized === 'GOOD' ||
+    normalized === 'NORMAL' ||
+    normalized === 'BAD' ||
+    normalized === 'CRITICAL' ||
+    normalized === 'STALE'
+  ) {
+    return normalized;
+  }
+
+  return undefined;
+};
+
 const normalizeZone = (zone: RobotZoneResponse): RobotZone => ({
   id: zone.id,
   name: zone.name,
@@ -229,11 +270,22 @@ const normalizeZone = (zone: RobotZoneResponse): RobotZone => ({
   color: zone.color,
   area: zone.area,
   polygon: normalizeZonePolygon(zone.polygon),
+  air_score: typeof zone.air_score === 'number' ? zone.air_score : undefined,
+  air_grade: normalizeZoneAirGrade(zone.air_grade),
 });
 
 const normalizeZones = (zones?: RobotZoneResponse[]): RobotZone[] => {
   if (!Array.isArray(zones)) return [];
   return zones.map(normalizeZone);
+};
+
+const normalizeAirQualityGrade = (grade: unknown): RobotAirQualityGrade => {
+  const normalized = String(grade || '').trim().toUpperCase();
+  if (normalized === 'GOOD' || normalized === 'NORMAL' || normalized === 'BAD' || normalized === 'CRITICAL') {
+    return normalized;
+  }
+
+  return 'NORMAL';
 };
 
 export const sendRobotCommand = async (robotId: string, target: string, action: string) => {
@@ -348,11 +400,16 @@ export const saveRobotZones = async (robotId: string | undefined, zones: RobotZo
     area,
     polygon: polygon?.map((point) => [point.x, point.y]),
   }));
+  console.log('구역 저장 요청:', {
+    url: `${API_BASE_URL}/robots/${targetId}/zones`,
+    payload: { zones: payload },
+  });
   const response = await axios.put(
     `${API_BASE_URL}/robots/${targetId}/zones`,
     { zones: payload },
     { headers: createAuthHeaders(), timeout: REQUEST_TIMEOUT_MS }
   );
+  console.log('구역 저장 응답:', response.status, response.data);
   return response.data;
 };
 
@@ -390,10 +447,34 @@ export const fetchRobotStatus = async (robotId?: string): Promise<RobotStatusSum
     headers: createAuthHeaders(),
     timeout: REQUEST_TIMEOUT_MS,
   });
-  const data = response.data || {};
-  const robotStatus = data.robot_status || {};
-  const airQuality = data.air_quality || {};
-  const sensors = airQuality.sensors || {};
+  const rawData = response.data || {};
+  const data = rawData.data || rawData.result || rawData;
+  const robotStatus = data.robot_status || data.robotStatus || data.status || {};
+  const airQuality = data.air_quality || data.airQuality || {};
+  const legacyAirQuality = robotStatus.air_quality || robotStatus.airQuality || {};
+  const sensors =
+    data.sensors ||
+    data.sensor ||
+    airQuality.sensors ||
+    robotStatus.sensors ||
+    rawData.sensor ||
+    rawData.sensors ||
+    {};
+  const pose = data.pose || data.robot_pose || rawData.pose || robotStatus.pose;
+  const score =
+    airQuality.score ??
+    data.air_score ??
+    data.score ??
+    rawData.air_score ??
+    rawData.score ??
+    legacyAirQuality.score;
+  const grade =
+    airQuality.grade ??
+    data.air_grade ??
+    data.grade ??
+    rawData.air_grade ??
+    rawData.grade ??
+    legacyAirQuality.grade;
 
   return {
     robot_status: {
@@ -404,8 +485,8 @@ export const fetchRobotStatus = async (robotId?: string): Promise<RobotStatusSum
       current_zone: robotStatus.current_zone ?? null,
     },
     air_quality: {
-      score: Number(airQuality.score ?? 0),
-      grade: airQuality.grade || 'NORMAL',
+      score: Number(score ?? 0),
+      grade: normalizeAirQualityGrade(grade),
       sensors: {
         pm25: Number(sensors.pm25 ?? 0),
         voc: Number(sensors.voc ?? 0),
@@ -413,6 +494,14 @@ export const fetchRobotStatus = async (robotId?: string): Promise<RobotStatusSum
         humidity: Number(sensors.humidity ?? 0),
       },
     },
+    pose: pose && typeof pose.x === 'number' && typeof pose.y === 'number'
+      ? {
+          x: pose.x,
+          y: pose.y,
+          theta: Number(pose.theta ?? 0),
+        }
+      : undefined,
+    last_updated: data.last_updated || rawData.last_updated,
   };
 };
 
@@ -440,12 +529,26 @@ export const resetRobotData = async (robotId: string | undefined, target: 'MAP' 
 
 export const navigateRobot = async (
   robotId: string | undefined,
-  payload: { type: 'COORDINATE'; x: number; y: number } | { type: 'ZONE'; zone_id: number }
+  payload:
+    | { type: 'MOVE_TO'; x: number; y: number; theta?: number }
+    | { type: 'MOVE_TO'; target_type: 'ZONE'; zone_id: number; zone_name: string; x: number; y: number; theta?: number }
+    | { type: 'CANCEL_NAVIGATION' }
 ) => {
   const targetId = getRobotId(robotId);
-  const response = await axios.post(`${API_BASE_URL}/robots/${targetId}/navigate`, payload, {
-    headers: createAuthHeaders(),
+  const url = `${API_BASE_URL}/robots/${targetId}/navigate`;
+  const headers = createAuthHeaders();
+
+  console.log('이동 명령 요청:', {
+    url,
+    payload,
+    hasToken: Boolean(headers.Authorization),
+  });
+
+  const response = await axios.post(url, payload, {
+    headers,
     timeout: REQUEST_TIMEOUT_MS,
   });
+
+  console.log('이동 명령 응답:', response.status, response.data);
   return response.data;
 };

@@ -2,20 +2,24 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Navigation from '../components/Navigation';
 import CommonModal, { type ModalType } from '../components/CommonModal';
+import RetryErrorModal from '../components/RetryErrorModal';
 import SleepTimeModal from '../components/SleepTimeModal';
 import useAuthStore from '../store/useAuthStore';
+import useRobotStore from '../store/useRobotStore';
 import { resetRobotData } from '../api/ARIARobotController';
 
 const SettingsPage = () => {
   const navigate = useNavigate();
   const logout = useAuthStore((state) => state.logout);
   const authRobotId = useAuthStore((state) => state.robotId);
+  const beginSetupFlow = useRobotStore((state) => state.beginSetupFlow);
   // 1. 공통 모달(초기화 등) 상태
   const [isCommonOpen, setIsCommonOpen] = useState(false);
   const [modalType, setModalType] = useState<ModalType>('RESET');
 
   // 2. 수면 시간 설정 모달 상태
   const [isSleepOpen, setIsSleepOpen] = useState(false);
+  const [isRetryOpen, setIsRetryOpen] = useState(false);
 
   // 환경 변수 불러오기
   const ROBOT_ID = authRobotId || import.meta.env.VITE_ROBOT_ID || "1";
@@ -33,10 +37,16 @@ const SettingsPage = () => {
 
     try {
       const data = await resetRobotData(ROBOT_ID, target);
+      if (target === 'MAP') {
+        beginSetupFlow();
+        setIsCommonOpen(false);
+        navigate('/map', { replace: true, state: { requireMapSetup: true } });
+        return;
+      }
       alert(data.message || "초기화 명령이 성공적으로 전송되었습니다.");
     } catch (error) {
       console.error("Reset Error:", error);
-      alert("초기화 중 오류가 발생했습니다.");
+      setIsRetryOpen(true);
     } finally {
       setIsCommonOpen(false); // 작업 완료 후 모달 닫기
     }
@@ -106,6 +116,15 @@ const SettingsPage = () => {
         onClose={() => setIsSleepOpen(false)}
         onSave={handleSaveSleepTime}
         robotId={ROBOT_ID}
+      />
+
+      <RetryErrorModal
+        isOpen={isRetryOpen}
+        onRetry={() => {
+          setIsRetryOpen(false);
+          handleConfirmReset();
+        }}
+        onClose={() => setIsRetryOpen(false)}
       />
 
       <Navigation />

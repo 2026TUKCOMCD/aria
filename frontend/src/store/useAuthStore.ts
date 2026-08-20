@@ -11,6 +11,20 @@ interface AuthState {
   logout: () => void;
 }
 
+const DEFAULT_ROBOT_ID = import.meta.env.VITE_ROBOT_ID || '1';
+
+const normalizeRobotId = (robotId?: string | null) => {
+  const value = String(robotId || '').trim();
+  if (!value) return DEFAULT_ROBOT_ID;
+
+  const normalized = value.toLowerCase();
+  if (normalized === 'unknown' || normalized === 'undefined' || normalized === 'null') {
+    return DEFAULT_ROBOT_ID;
+  }
+
+  return value;
+};
+
 const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
@@ -21,7 +35,7 @@ const useAuthStore = create<AuthState>()(
       qrToken: null,
       login: ({ robotId, userName, robotName, qrToken }) => set({
         isLoggedIn: true,
-        robotId,
+        robotId: normalizeRobotId(robotId),
         userName,
         robotName,
         qrToken,
@@ -36,6 +50,15 @@ const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'aria-auth-storage',
+      merge: (persistedState, currentState) => {
+        const persisted = persistedState as Partial<AuthState>;
+
+        return {
+          ...currentState,
+          ...persisted,
+          robotId: normalizeRobotId(persisted.robotId),
+        };
+      },
     }
   )
 );
