@@ -1,10 +1,12 @@
 import { Fragment, useEffect, useMemo, useState, type MouseEvent } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import CheckIcon from '../assets/check.svg?react';
 import MapIcon from '../assets/map.svg?react';
 import Navigation from '../components/Navigation';
 import NameInputModal from '../components/NameInputModal';
-import { navigateRobot } from '../api/ARIARobotController';
+import RetryErrorModal from '../components/RetryErrorModal';
+import SetupFlowModal from '../components/SetupFlowModal';
+import { navigateRobot, sendRobotCommand } from '../api/ARIARobotController';
 import useRobotStore from '../store/useRobotStore';
 import useAuthStore from '../store/useAuthStore';
 import type { AirQualityStatus, ZoneAirQuality, ZoneArea, ZonePoint } from '../api/ARIARobotController';
@@ -37,6 +39,12 @@ const getEffectiveAirQualityStatus = (item?: ZoneAirQuality): AirQualityStatus =
   return item.status;
 };
 
+const normalizeZoneAirGrade = (grade?: string): AirQualityStatus => {
+  if (grade === 'GOOD' || grade === 'NORMAL' || grade === 'BAD') return grade;
+  if (grade === 'CRITICAL') return 'BAD';
+  return 'STALE';
+};
+
 const airQualityStyle: Record<AirQualityStatus, { label: string; className: string }> = {
   GOOD: { label: '좋음', className: 'border-emerald-500 bg-emerald-400/35 text-emerald-700' },
   NORMAL: { label: '보통', className: 'border-amber-500 bg-amber-300/40 text-amber-700' },
@@ -47,6 +55,9 @@ const airQualityStyle: Record<AirQualityStatus, { label: string; className: stri
 const MapPage = () => {
   const [selectedZoneId, setSelectedZoneId] = useState<number | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isMapCommanding, setIsMapCommanding] = useState(false);
+  const [retryAction, setRetryAction] = useState<(() => void) | null>(null);
+  const [isDockSavedNoticeOpen, setIsDockSavedNoticeOpen] = useState(false);
   const [editMode, setEditMode] = useState<'ZONE_NAME' | 'CHARGER'>('ZONE_NAME');
 
   const {
@@ -67,6 +78,9 @@ const MapPage = () => {
     setChargerPosition,
     isChargerSetupComplete,
     isChargerSetupRequired: shouldForceChargerSetup,
+    setupStep,
+    setSetupStep,
+    beginSetupFlow,
     confirmChargerSetup,
     saveChargerPosition,
     saveZones,
@@ -75,6 +89,7 @@ const MapPage = () => {
   const authRobotId = useAuthStore((state) => state.robotId);
   const robotId = authRobotId || import.meta.env.VITE_ROBOT_ID || '1';
   const location = useLocation();
+  const navigate = useNavigate();
   const metadata = mapData?.metadata;
   const isChargerSetupRequired = Boolean(mapData && (!isChargerSetupComplete || shouldForceChargerSetup));
   const displayZones = useMemo(() => {
@@ -105,11 +120,25 @@ const MapPage = () => {
   }, [loadChargerPosition, loadMapData, loadZoneAirQuality, loadZones, robotId]);
 
   useEffect(() => {
-    if (location.state?.requireChargerSetup || isChargerSetupRequired) {
+    if (location.state?.requireMapSetup && !mapData) {
+      beginSetupFlow();
+      return;
+    }
+
+    if (mapData && setupStep === 'MAP_REQUIRED') {
+      setSetupStep('DOCK_REQUIRED');
+    }
+  }, [location.state, mapData, setSetupStep, setupStep]);
+
+  useEffect(() => {
+    if (
+      setupStep === 'DOCK_MOVE_REQUIRED' ||
+      setupStep === 'DOCK_CONFIRM_REQUIRED'
+    ) {
       setEditMode('CHARGER');
       setSelectedZoneId(null);
     }
-  }, [isChargerSetupRequired, location.state]);
+  }, [setupStep]);
 
   const worldSize = useMemo(() => {
     if (!metadata) return null;
@@ -128,7 +157,13 @@ const MapPage = () => {
       xs.push(zone.center.x);
       ys.push(zone.center.y);
 
-      if (zone.area) {
+      if (
+        zone.area &&
+        typeof zone.area.x_min === 'number' &&
+        typeof zone.area.x_max === 'number' &&
+        typeof zone.area.y_min === 'number' &&
+        typeof zone.area.y_max === 'number'
+      ) {
         xs.push(zone.area.x_min, zone.area.x_max);
         ys.push(zone.area.y_min, zone.area.y_max);
       }
@@ -195,6 +230,12 @@ const MapPage = () => {
 
   const areaToStyle = (area?: ZoneArea) => {
     if (!area || !metadata || !worldSize) return null;
+    if (
+      typeof area.x_min !== 'number' ||
+      typeof area.y_min !== 'number' ||
+      typeof area.x_max !== 'number' ||
+      typeof area.y_max !== 'number'
+    ) return null;
 
     const [originX, originY] = metadata.origin;
     const left = ((area.x_min - originX) / worldSize.width) * 100;
@@ -221,16 +262,48 @@ const MapPage = () => {
       .join(' ');
   };
 
-  const handleSaveZoneName = (newName: string) => {
+  const handleSaveZoneName = async (newName: string) => {
     if (!selectedZone) return;
 
     updateZone({ ...selectedZone, name: newName });
-    setSelectedZoneId(null);
+
+    try {
+      console.log('구역 이름 저장 요청:', {
+        robotId,
+        zoneId: selectedZone.id,
+        name: newName,
+      });
+      await saveZones(robotId);
+      console.log('구역 이름 저장 완료');
+      setSelectedZoneId(null);
+    } catch (error) {
+      console.error('구역 이름 저장 실패:', error);
+      openRetry(() => handleSaveZoneName(newName));
+    }
+  };
+
+  const openRetry = (action: () => void) => {
+    setRetryAction(() => action);
+  };
+
+  const handleStartMapCreation = async () => {
+    setIsMapCommanding(true);
+
+    try {
+      await sendRobotCommand(robotId, 'SLAM', 'ON');
+      setSetupStep('MAP_REQUIRED');
+      alert('맵 데이터 생성을 시작합니다. 생성이 완료되면 맵 새로고침을 눌러주세요.');
+    } catch (error) {
+      console.error('맵 생성 시작 실패:', error);
+      openRetry(handleStartMapCreation);
+    } finally {
+      setIsMapCommanding(false);
+    }
   };
 
   const handleSaveZones = async () => {
     if (isChargerSetupRequired && !chargerPosition) {
-      alert('먼저 맵에서 충전기 위치를 선택해주세요.');
+      alert('\uba3c\uc800 \ub9f5\uc5d0\uc11c \ucda9\uc804\uae30 \uc704\uce58\ub97c \uc120\ud0dd\ud574\uc8fc\uc138\uc694.');
       setEditMode('CHARGER');
       return;
     }
@@ -241,25 +314,17 @@ const MapPage = () => {
       await saveZones(robotId);
       if (chargerPosition) {
         await saveChargerPosition(robotId);
-        const isRobotOnCharger = window.confirm(
-          `충전위치 설정을 완료했습니다.\n충전기 위치: x ${chargerPosition.x.toFixed(2)}, y ${chargerPosition.y.toFixed(2)}\n\n공기청정기가 충전위치에 있습니까?`
-        );
-
-        if (isRobotOnCharger) {
-          confirmChargerSetup();
-          alert('충전위치 설정이 완료되었습니다. 이제 다른 페이지로 이동할 수 있습니다.');
-        } else {
-          alert('공기청정기를 충전위치에 둔 뒤 다시 현재 상태 저장을 눌러주세요.');
-        }
+        setSetupStep('DOCK_MOVE_REQUIRED');
+        setIsDockSavedNoticeOpen(true);
         return;
       }
-      alert('구역 정보가 저장되었습니다.');
+      alert('\uad6c\uc5ed \uc815\ubcf4\uac00 \uc800\uc7a5\ub418\uc5c8\uc2b5\ub2c8\ub2e4.');
     } catch (error) {
-      console.error('구역 정보 저장 실패:', error);
+      console.error('\uad6c\uc5ed \uc815\ubcf4 \uc800\uc7a5 \uc2e4\ud328:', error);
       if (error && typeof error === 'object' && 'response' in error) {
-        console.error('구역 정보 저장 응답:', error.response);
+        console.error('\uad6c\uc5ed \uc815\ubcf4 \uc800\uc7a5 \uc751\ub2f5:', error.response);
       }
-      alert('구역 정보를 저장하지 못했습니다.');
+      openRetry(handleSaveZones);
     } finally {
       setIsSaving(false);
     }
@@ -283,25 +348,44 @@ const MapPage = () => {
 
   const handleReturnToCharger = async () => {
     if (!chargerPosition) {
-      alert('먼저 충전기 위치를 설정해주세요.');
+      alert('\uba3c\uc800 \ucda9\uc804\uae30 \uc704\uce58\ub97c \uc124\uc815\ud574\uc8fc\uc138\uc694.');
       return;
     }
 
     try {
+      console.log('충전기 위치로 이동 버튼 클릭:', {
+        robotId,
+        chargerPosition,
+      });
+      setSetupStep('DOCK_MOVE_REQUIRED');
       await navigateRobot(robotId, {
-        type: 'COORDINATE',
+        type: 'MOVE_TO',
         x: chargerPosition.x,
         y: chargerPosition.y,
+        theta: 0,
       });
-      alert('충전기 위치로 이동 명령을 보냈습니다.');
     } catch (error) {
-      console.error('충전기 이동 명령 실패:', error);
-      alert('충전기 위치로 이동 명령을 보내지 못했습니다.');
+      console.error('\ucda9\uc804\uae30 \uc774\ub3d9 \uba85\ub839 \uc2e4\ud328:', error);
+      openRetry(handleReturnToCharger);
     }
   };
 
   const robotPoint = robotPosition ? worldToPercent(robotPosition, true) : null;
-  const chargerPoint = chargerPosition && editMode !== 'CHARGER' ? worldToPercent(chargerPosition, true) : null;
+  const chargerPoint = chargerPosition ? worldToPercent(chargerPosition, true) : null;
+
+  const handleConfirmDockArrival = async () => {
+    confirmChargerSetup();
+    try {
+      await sendRobotCommand(robotId, 'MODE', 'WAIT');
+    } catch (error) {
+      console.error('대기 상태 전송 실패:', error);
+    }
+    navigate('/', { replace: true });
+  };
+
+  const handleRejectDockArrival = () => {
+    setSetupStep('DOCK_MOVE_REQUIRED');
+  };
 
   return (
     <div className="flex min-h-screen flex-col pb-[100px] font-sans">
@@ -321,16 +405,14 @@ const MapPage = () => {
           <div className="flex h-[65px] w-full items-center rounded-[25px] bg-white p-1.5">
             <button
               type="button"
-              disabled={isChargerSetupRequired}
               onClick={() => {
-                if (isChargerSetupRequired) return;
                 setEditMode('ZONE_NAME');
               }}
               className={`flex h-full flex-1 items-center justify-center gap-2 rounded-[20px] text-[18px] font-black transition-all ${
                 editMode === 'ZONE_NAME'
                   ? 'bg-main-blue text-white shadow-md'
                   : 'text-gray-400'
-              } ${isChargerSetupRequired ? 'cursor-not-allowed opacity-50' : ''}`}
+              }`}
             >
               구역 이름 설정
               {editMode === 'ZONE_NAME' && <CheckIcon className="h-5 w-5 fill-current" />}
@@ -381,13 +463,15 @@ const MapPage = () => {
                   draggable={false}
                 />
 
-                {displayZones.map((zone) => {
-                  const point = zoneToPercent(zone.center) || worldToPercent(zone.center, true);
+                {editMode === 'ZONE_NAME' && displayZones.map((zone) => {
+                  const point = worldToPercent(zone.center, true);
                   const areaStyle = areaToStyle(zone.area);
                   const polygonPoints = polygonToPoints(zone.polygon);
                   const hasPolygon = Boolean(polygonPoints);
                   const isSelected = selectedZoneId === zone.id;
-                  const status = getEffectiveAirQualityStatus(airQualityByZoneId.get(zone.id));
+                  const status = zone.air_grade
+                    ? normalizeZoneAirGrade(zone.air_grade)
+                    : getEffectiveAirQualityStatus(airQualityByZoneId.get(zone.id));
 
                   return (
                     <Fragment key={zone.id}>
@@ -450,6 +534,7 @@ const MapPage = () => {
                         </span>
                         <span className="mt-1 block rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-black text-gray-600 shadow">
                           {airQualityStyle[status].label}
+                          {typeof zone.air_score === 'number' ? ` ${zone.air_score}` : ''}
                         </span>
                       </button>
                     </Fragment>
@@ -531,11 +616,20 @@ const MapPage = () => {
               <span className="font-bold text-gray-400">
                 {mapError || '저장된 맵 데이터가 없습니다'}
               </span>
+              <button
+                type="button"
+                onClick={handleStartMapCreation}
+                disabled={isMapCommanding}
+                className="rounded-[18px] bg-main-blue px-6 py-3 text-[16px] font-black text-white shadow-lg disabled:bg-gray-400"
+              >
+                {isMapCommanding ? '맵 생성 요청 중' : '맵 데이터 생성'}
+              </button>
             </div>
           )}
         </div>
       </section>
 
+      {mapData && (
       <section className="mt-3 mb-1 grid grid-cols-[1fr_1fr] gap-3 px-6">
         <button
           onClick={() => {
@@ -555,6 +649,7 @@ const MapPage = () => {
           {isSaving ? '저장 중' : '현재 상태 저장'}
         </button>
       </section>
+      )}
 
       {chargerPosition && (
         <section className="mb-3 px-6">
@@ -574,7 +669,37 @@ const MapPage = () => {
         onSave={handleSaveZoneName}
       />
 
-      <Navigation />
+      <RetryErrorModal
+        isOpen={Boolean(retryAction)}
+        onRetry={() => {
+          const action = retryAction;
+          setRetryAction(null);
+          action?.();
+        }}
+        onClose={() => setRetryAction(null)}
+      />
+
+      <SetupFlowModal
+        isOpen={isDockSavedNoticeOpen}
+        message={'충전위치 설정을 완료했습니다.'}
+        description={
+          chargerPosition
+            ? `충전기 위치: x ${chargerPosition.x.toFixed(2)}, y ${chargerPosition.y.toFixed(2)}`
+            : undefined
+        }
+        onConfirm={() => setIsDockSavedNoticeOpen(false)}
+      />
+
+      <SetupFlowModal
+        isOpen={setupStep === 'DOCK_CONFIRM_REQUIRED'}
+        message={'공기청정기가 이동을 완료했습니다.\n공기청정기가 충전위치에 있습니까?'}
+        confirmText="예"
+        cancelText="아니오"
+        onConfirm={handleConfirmDockArrival}
+        onCancel={handleRejectDockArrival}
+      />
+
+      {setupStep !== 'MAP_REQUIRED' && <Navigation />}
     </div>
   );
 };

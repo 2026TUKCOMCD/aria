@@ -17,9 +17,22 @@ import {
   type ZonePoint,
 } from '../api/ARIARobotController';
 
+export type SetupStep =
+  | 'MAP_REQUIRED'
+  | 'DOCK_REQUIRED'
+  | 'DOCK_MOVE_REQUIRED'
+  | 'DOCK_CONFIRM_REQUIRED'
+  | 'COMPLETE';
+
 interface Log {
   time: string;
   content: string;
+}
+
+export interface SleepSchedule {
+  wake_time: string;
+  sleep_time: string;
+  enabled: boolean;
 }
 
 export interface RobotPosition {
@@ -51,6 +64,8 @@ interface RobotState {
   airQualityError: string | null;
   isChargerSetupComplete: boolean;
   isChargerSetupRequired: boolean;
+  setupStep: SetupStep;
+  sleepSchedule: SleepSchedule | null;
   isMapLoading: boolean;
   mapError: string | null;
 
@@ -72,6 +87,9 @@ interface RobotState {
   setChargerPosition: (position: ZonePoint | null) => void;
   confirmChargerSetup: () => void;
   resetChargerSetup: () => void;
+  beginSetupFlow: () => void;
+  setSetupStep: (step: SetupStep) => void;
+  setSleepSchedule: (schedule: SleepSchedule | null) => void;
   saveChargerPosition: (robotId?: string) => Promise<void>;
   saveZones: (robotId?: string) => Promise<void>;
 }
@@ -83,10 +101,43 @@ const formatLogTime = (value: string) => {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 };
 
+const formatEventTime = (value?: string | number) => {
+  if (!value) return formatLogTime(new Date().toISOString());
+
+  if (typeof value === 'number') {
+    return formatLogTime(new Date(value < 10_000_000_000 ? value * 1000 : value).toISOString());
+  }
+
+  return formatLogTime(value);
+};
+
+const getEventMessage = (type?: string, message?: string) => {
+  if (message) return message;
+
+  switch (type) {
+    case 'POLLUTION_COOKING':
+      return '요리로 인한 오염이 감지되었습니다.';
+    case 'POLLUTION_NORMAL':
+      return '일반 오염이 감지되었습니다.';
+    case 'ACTIVITY_DETECTED':
+      return '사람의 활동이 감지되었습니다.';
+    case 'INACTIVITY_DETECTED':
+      return '일정 시간 비활동 상태입니다.';
+    case 'PURIFYING_START':
+      return '공기 청정을 시작합니다.';
+    case 'PURIFYING_DONE':
+      return '청정이 완료되었습니다.';
+    case 'PATROL_START':
+      return '자율 순찰을 시작합니다.';
+    default:
+      return '이벤트가 발생했습니다.';
+  }
+};
+
 const useRobotStore = create<RobotState>()(
   persist(
     (set, get) => ({
-      isAiMode: true,
+      isAiMode: false,
       isRunning: false,
       robotStatus: 'IDLE',
       battery: 100,
@@ -103,6 +154,8 @@ const useRobotStore = create<RobotState>()(
       airQualityError: null,
       isChargerSetupComplete: false,
       isChargerSetupRequired: false,
+      setupStep: 'MAP_REQUIRED',
+      sleepSchedule: null,
       isMapLoading: false,
       mapError: null,
 
@@ -115,6 +168,16 @@ const useRobotStore = create<RobotState>()(
       loadRobotStatus: async (robotId) => {
         try {
           const robotStatusSummary = await fetchRobotStatus(robotId);
+          const statusValue = (
+            robotStatusSummary.robot_status.current_zone ||
+            ''
+          ).toUpperCase();
+          const isActuallyRunning =
+            statusValue === 'RUNNING' ||
+            statusValue === 'MOVING' ||
+            statusValue === 'CLEANING';
+          const shouldUpdateRunning = Boolean(statusValue);
+
           set({
             robotStatusSummary,
             robotStatusError: null,
@@ -123,8 +186,18 @@ const useRobotStore = create<RobotState>()(
               pm25: robotStatusSummary.air_quality.sensors.pm25,
               voc: robotStatusSummary.air_quality.sensors.voc,
             },
-            isRunning: robotStatusSummary.robot_status.power === 'ON',
-            isAiMode: robotStatusSummary.robot_status.mode === 'AUTO',
+            ...(shouldUpdateRunning ? { isRunning: isActuallyRunning } : {}),
+            ...(robotStatusSummary.pose
+              ? {
+                  robotPosition: {
+                    robot_id: String(robotId || '1'),
+                    x: robotStatusSummary.pose.x,
+                    y: robotStatusSummary.pose.y,
+                    theta: robotStatusSummary.pose.theta,
+                    updated_at: new Date().toISOString(),
+                  },
+                }
+              : {}),
           });
         } catch (error) {
           console.error('로봇 상태 조회 실패:', error);
@@ -144,8 +217,8 @@ const useRobotStore = create<RobotState>()(
         try {
           const events = await fetchRobotEvents(robotId);
           const formattedLogs = events.map((row) => ({
-            time: formatLogTime(row.created_at),
-            content: row.message,
+            time: formatEventTime(row.created_at || row.timestamp),
+            content: getEventMessage(row.type || row.event || row.event_type, row.message),
           }));
 
           set({ logs: formattedLogs });
@@ -155,7 +228,6 @@ const useRobotStore = create<RobotState>()(
       },
 
       loadMapData: async (robotId) => {
-        const previousMap = get().mapData;
         set({ isMapLoading: true, mapError: null });
 
         try {
@@ -163,13 +235,22 @@ const useRobotStore = create<RobotState>()(
           set({
             mapData,
             zones: mapData.zones && mapData.zones.length > 0 ? mapData.zones : get().zones,
+            setupStep: get().setupStep === 'MAP_REQUIRED' ? 'DOCK_REQUIRED' : get().setupStep,
+            isChargerSetupRequired: get().setupStep === 'MAP_REQUIRED' ? true : get().isChargerSetupRequired,
+            isChargerSetupComplete: get().setupStep === 'MAP_REQUIRED' ? false : get().isChargerSetupComplete,
             isMapLoading: false,
             mapError: null,
           });
         } catch (error) {
           console.error('맵 데이터 조회 실패:', error);
           set({
-            mapData: previousMap,
+            mapData: null,
+            zones: [],
+            zoneAirQuality: [],
+            chargerPosition: null,
+            isChargerSetupComplete: false,
+            isChargerSetupRequired: true,
+            setupStep: 'MAP_REQUIRED',
             isMapLoading: false,
             mapError: '맵 데이터를 불러오지 못했습니다.',
           });
@@ -202,10 +283,10 @@ const useRobotStore = create<RobotState>()(
 
       loadChargerPosition: async (robotId) => {
         try {
+          if (get().setupStep !== 'COMPLETE') return;
+
           const dock = await fetchRobotDock(robotId);
           if (!dock) return;
-          const shouldKeepSetupRequired = get().isChargerSetupRequired;
-          if (shouldKeepSetupRequired) return;
 
           set({
             chargerPosition: {
@@ -213,6 +294,8 @@ const useRobotStore = create<RobotState>()(
               y: dock.y,
             },
             isChargerSetupComplete: true,
+            isChargerSetupRequired: false,
+            setupStep: 'COMPLETE',
           });
         } catch (error) {
           console.error('충전기 위치 조회 실패:', error);
@@ -242,13 +325,32 @@ const useRobotStore = create<RobotState>()(
       confirmChargerSetup: () => set({
         isChargerSetupComplete: true,
         isChargerSetupRequired: false,
+        setupStep: 'COMPLETE',
       }),
 
       resetChargerSetup: () => set({
         chargerPosition: null,
         isChargerSetupComplete: false,
         isChargerSetupRequired: true,
+        setupStep: 'DOCK_REQUIRED',
       }),
+
+      beginSetupFlow: () => set({
+        mapData: null,
+        zones: [],
+        chargerPosition: null,
+        isChargerSetupComplete: false,
+        isChargerSetupRequired: true,
+        setupStep: 'MAP_REQUIRED',
+      }),
+
+      setSetupStep: (step) => set({
+        setupStep: step,
+        isChargerSetupComplete: step === 'COMPLETE',
+        isChargerSetupRequired: step !== 'COMPLETE',
+      }),
+
+      setSleepSchedule: (schedule) => set({ sleepSchedule: schedule }),
 
       saveChargerPosition: async (robotId) => {
         const chargerPosition = get().chargerPosition;
@@ -280,21 +382,28 @@ const useRobotStore = create<RobotState>()(
     }),
     {
       name: 'aria-robot-storage',
+      merge: (persistedState, currentState) => {
+        const persisted = persistedState as Partial<RobotState>;
+
+        return {
+          ...currentState,
+          ...persisted,
+          mapData: null,
+          zones: [],
+          zoneAirQuality: [],
+          chargerPosition: null,
+          robotPosition: null,
+        };
+      },
       partialize: (state) => ({
-        isAiMode: state.isAiMode,
-        isRunning: state.isRunning,
-        robotStatus: state.robotStatus,
         battery: state.battery,
         airQuality: state.airQuality,
         robotStatusSummary: state.robotStatusSummary,
-        robotPosition: state.robotPosition,
         logs: state.logs,
-        mapData: state.mapData,
-        zones: state.zones,
-        zoneAirQuality: state.zoneAirQuality,
-        chargerPosition: state.chargerPosition,
         isChargerSetupComplete: state.isChargerSetupComplete,
         isChargerSetupRequired: state.isChargerSetupRequired,
+        setupStep: state.setupStep,
+        sleepSchedule: state.sleepSchedule,
         airQualityUpdatedAt: state.airQualityUpdatedAt,
       }),
     }

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { saveRobotSchedule } from '../api/ARIARobotController';
+import useRobotStore from '../store/useRobotStore';
 
 interface SleepTimeModalProps {
   isOpen: boolean;
@@ -11,6 +12,7 @@ interface SleepTimeModalProps {
 
 const SleepTimeModal = ({ isOpen, onClose, onSave, robotId = "1" }: SleepTimeModalProps) => {
   const ROBOT_ID = import.meta.env.VITE_ROBOT_ID || "1";
+  const setSleepSchedule = useRobotStore((state) => state.setSleepSchedule);
   
   const [sleepTime, setSleepTime] = useState({ period: '오후', hour: '11', minute: '00' });
   const [wakeTime, setWakeTime] = useState({ period: '오전', hour: '07', minute: '00' });
@@ -82,6 +84,12 @@ const SleepTimeModal = ({ isOpen, onClose, onSave, robotId = "1" }: SleepTimeMod
 
     try {
       await saveRobotSchedule(robotId || ROBOT_ID, {
+        wake_time: wTime,
+        sleep_time: sTime,
+        enabled,
+      });
+
+      setSleepSchedule({
         wake_time: wTime,
         sleep_time: sTime,
         enabled,
