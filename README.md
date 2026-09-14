@@ -1,173 +1,89 @@
-# AI 로봇 공기청정기 (Aria)
+# ARIA: AI 기반 자율주행 로봇 공기청정기
 
-## 1. 개요 (Overview)
-본 프로젝트는 기존의 고정형 공기청정기가 가진 수동적 정화의 한계를 극복하고, 사용자의 생활 패턴을 학습하여 스스로 오염원을 찾아가는 시스템입니다. 
+![ROS2](https://img.shields.io/badge/ROS2-Humble-22314E?style=flat-square&logo=ros)
+![Python](https://img.shields.io/badge/Python-3.10-3776AB?style=flat-square&logo=python)
+![C++](https://img.shields.io/badge/C++-17-00599C?style=flat-square&logo=c%2B%2B)
+![PlatformIO](https://img.shields.io/badge/PlatformIO-ESP32-F58220?style=flat-square&logo=platformio)
+![AWS](https://img.shields.io/badge/AWS-IoT%20Core-232F3E?style=flat-square&logo=amazonaws)
 
-단순히 센서 수치가 높을 때 가동하는 사후 대응 방식을 넘어, AI 기반의 오염 조기 예측과 실시간 객체 인식(YOLO)을 통한 사람 활동 여부 판단을 결합하여 정화 효율과 에너지 절약이라는 두 가지 목표를 동시에 달성합니다. 
-
-지능형 자율주행: SLAM(Simultaneous Localization and Mapping)과 Navigation2를 활용해 집안 지도를 생성하고 최적의 정화 위치로 이동합니다.
-사용자 패턴 분석: 센서 데이터의 기울기(Gradient) 분석으로 요리 등의 이벤트를 예측하며, 사용자의 앱 설정 스케줄에 맞춰 저전력 모드와 정상 가동 모드를 스마트하게 전환합니다.
-클라우드 데이터 파이프라인: AWS IoT Core와 Lambda를 연동하여 센서 데이터를 수집하고, 축적된 데이터를 통해 AI 모델을 지속적으로 고도화하는 MLOps 구조를 지향합니다.
-
----
-
-## 2. 시스템 구조도 (System Architecture)
-<img width="1141" height="592" alt="image" src="https://github.com/user-attachments/assets/6a8448ac-9c19-4d13-abdb-b5f5db7b0e16" />
-
-
+기존 고정형 공기청정기의 사각지대 문제를 해결하기 위해, 라이다와 각종 센서, 경량 AI를 탑재하여 실내 공간을 자율주행하며 오염을 선제적으로 정화하는 가정용 이동형 공기청정 로봇입니다. (2026 한이음 ICT 멘토링 우수 프로젝트)
 
 ---
 
-## 3. 개발 환경 (Development Environment)
+## System Overview
+
+기존 고정형 공기청정기는 설치 위치 주변만 청정 가능하여 넓은 실내 공간이나 거실과 떨어진 방에는 사각지대가 발생합니다. ARIA는 센서를 본체에 직접 내장한 소형 가정용 구조로 설계되었으며, 시간대별 오염 발생 패턴을 학습하여 오염이 발생하기 전에 미리 이동하는 선제 대응 방식을 채택했습니다.
+
+<!-- 로봇 외관 및 웹앱 화면 이미지 삽입 -->
+<p align="center">
+
+<img width="408" height="602" alt="Image" src="https://github.com/user-attachments/assets/43f0793d-f6d2-470c-a15d-644823c48bcc" />
+<img width="255" height="591" alt="Image" src="https://github.com/user-attachments/assets/8600a1cb-af0b-49f9-ab8f-a2f128841ff5" />
+</p>
 
 
-| 구분 | 상세 내용 |
+
+## Core Architecture
+
+단일 제어 루프의 병목을 극복하기 위해 **라즈베리파이(고성능 연산/AI)와 ESP32(실시간 하드웨어 제어)를 명확히 분리한 이기종 분산 아키텍처**로 설계되었습니다.
+
+<!-- 첨부해주신 통합 아키텍처 이미지(image_1a1de5.png)의 깃허브 URL 삽입 -->
+<p align="center">
+  
+<img width="1000" height="750" alt="Image" src="https://github.com/user-attachments/assets/b03f4e30-627a-4c1a-b035-aa65df5f5d68" />
+</p>
+
+### 1. Software Architecture (로봇-클라우드-웹 연동)
+*   **로봇 내부 계층:** LiDAR, ToF, 공기질 센서(PM2.5, VOC, 온습도) 데이터를 수집하고, 실시간 지도 작성 및 자율주행 모듈(SLAM, Nav2)을 구동합니다.
+*   **통신 / 클라우드 계층:** 로봇과 웹앱은 AWS IoT Core를 매개로 Device Shadow(desired/reported)를 통해 상태를 동기화합니다. 수신된 시계열 센서 데이터는 AWS Lambda를 거쳐 TimescaleDB의 Hypertable에 적재되어 빠른 조회를 지원합니다.
+*   **웹 어플리케이션 (React):** QR 로그인, 실시간 위치 표시가 포함된 맵 시각화, 스케줄 설정, 원격 모드 제어 등 사용자 인터페이스를 제공합니다.
+
+<p align="center">
+  
+<img width="650" height="750" alt="Image" src="https://github.com/user-attachments/assets/89c24b1c-c673-494a-bbcb-57c1cfec97cb" />
+</p>
+
+### 2. Hardware Architecture (이기종 분산 제어)
+*   **메인보드 (Raspberry Pi 4B):** 자율주행 및 센서 데이터 분석, AI 판단 처리를 담당합니다.
+*   **서브보드 (ESP32):** 각종 센서(공기질, 장애물 회피용 ToF, IMU)를 연결하여 데이터를 수집하고 구동부(바퀴, 모터)와 팬/필터를 실시간 통제합니다.
+*   **UART 바이너리 패킷 통신:** ESP32와 라즈베리파이 간 통신은 데이터 크기를 최소화하고 파싱 속도를 높이기 위해 22Byte 바이너리 패킷 구조(`[Header 2B] [Packet ID 1B] [Payload] [Checksum 1B] [Tail 2B]`)로 직접 설계되었습니다.
+
+---
+
+## Key Technologies (핵심 적용 기술)
+
+### 1. Edge AI 기반 오염 구역 선제 예측 (3단계 구조)
+단발성 센서 반응에 의존하지 않고, 생활 오염원(요리, 환기 등)의 반복적인 시간 패턴을 학습합니다.
+*   **1단계 (데이터 수집):** 로봇이 2시간 주기로 전 구역을 순회하며, 각 구역 도착 시점의 PM2.5 값을 시각, 요일 정보와 함께 CSV로 기록합니다.
+*   **2단계 (야간 재학습):** 매일 새벽 3시, 누적된 데이터 중 실제 오염이 발생했던 시점(PM2.5 70 이상)의 데이터만 추출하여 Random Forest 분류기(결정트리 50개, 최대 깊이 10)를 재학습시킵니다.
+*   **3단계 (실시간 예측 및 선제 이동):** 10초 주기로 현재 시각을 모델에 입력해 구역별 오염 확률을 산출하며, 예측 확률이 70%를 넘는 구역이 있으면 오염 확산 전 해당 구역으로 선제 이동하여 청정을 시작합니다.
+
+### 2. ROS2 자율주행 및 공간 인식
+*   **SLAM 및 위치 추정:** SLAM Toolbox(async 모드)의 루프 클로저(Loop Closure) 기법을 통해 2차원 지도를 생성하고, AMCL(Adaptive Monte Carlo Localization) 알고리즘으로 확률론적 위치 추정을 수행합니다.
+*   **Watershed 구역 자동 분할:** 생성된 지도를 방, 복도, 주방 등으로 분할하기 위해 Distance Transform과 Watershed 알고리즘을 적용하여 Nav2의 이동 목표 지점을 자동 추출합니다.
+*   **경로 계획 (Nav2):** A* 알고리즘 기반의 전역 경로 탐색과 DWB(Dynamic Window Approach) 기반의 지역 장애물 회피를 결합하여 주행합니다.
+
+### 3. 절전 및 자원 최적화
+*   **수면 시간 자동 절전:** 사용자가 설정한 수면 시간대(기본 23:00~07:00)에는 AI 추론을 자동으로 중단하는 SLEEP_MODE로 전환되어 불필요한 연산 자원 및 전력 소모를 방지합니다.
+
+---
+
+## Tech Stack
+
+| Category | Technologies |
 | :--- | :--- |
-| **OS** | Ubuntu 22.04 LTS |
-| **Middleware** | ROS 2 Humble Hawksbill |
-| **Language** | Python 3.10, C++ (Arduino IDE), JavaScript |
-| **Cloud/DB** | AWS IoT Core, Lambda, PostgreSQL (TimescaleDB) |
-| **AI/CV** | YOLOv8, PyTorch |
-
-
----
-
-## 4. 운영 환경 (Operating Environment)
-
-
-| 구분 | 상세 내용 |
-| :--- | :--- |
-| **Web** | Runs on Docker container on AWS EC2 |
-| **Cloud** | S3, PostgreSQL, AI SageMaker, AWS IoT Core, Lambda |
-| **Raspberry Pi 4B** | Programs using SLAM Toolbox and Nav2 run on ROS 2 middleware |
-| **ESP32** | Code developed with Arduino runs on firmware |
+| **OS / Environment** | Ubuntu 22.04 LTS, ROS2 Humble, PlatformIO, Git/GitHub |
+| **Hardware** | Raspberry Pi 4B, ESP32 Devkit C, Cytron 모터드라이버 |
+| **Sensors** | YDLidar X2, VL53L0X(ToF), SGP40(공기질), HDC2080(온습도), MPU9250(IMU) |
+| **Languages** | Python 3.10 (AI, ROS2), C++ (ESP32 펌웨어), JavaScript (웹앱) |
+| **AI / Data** | scikit-learn (Random ForestClassifier) |
+| **Cloud / Backend** | AWS IoT Core (MQTT), AWS Lambda, AWS S3, PostgreSQL (TimescaleDB) |
+| **Communication** | UART 바이너리 통신, Wi-Fi, paho-mqtt |
 
 ---
 
-## 5. 운영 시나리오 (Operating Scenario)
-<img width="925" height="537" alt="image" src="https://github.com/user-attachments/assets/8553823b-e6ee-447c-851a-e122a8399d66" />
+## Expected Effects
 
-<img width="942" height="542" alt="image" src="https://github.com/user-attachments/assets/ddeb83ee-3d1a-4558-969e-d06f70800447" />
-
-<img width="1040" height="737" alt="image" src="https://github.com/user-attachments/assets/e5c45bb8-4015-4fed-8dbc-4d03b58bf0f5" />
-
----
-
-## 6. 데모 환경 (Demo Environment)
-
-<img width="1218" height="557" alt="image" src="https://github.com/user-attachments/assets/ce715225-c9af-4bc0-ae4d-1b23c71ad247" />
-
----
-
-## ☁️ Cloud & Data (IoT Backend) Feature & User Story Backlog(160h)
-
-| ID | 유저스토리 (User Story) | SP | 시간 (h) |
-|----|-------------------------|----|----------|
-| A1-1 | 데이터 통신 규격 및 MQTT 토픽 설계 | 3 | 12 |
-| A1-2 | AWS IoT Core 보안 연결 (TLS / SSL) | 5 | 20 |
-| A1-3 | Keep-Alive 및 연결 상태 관리 | 4 | 16 |
-| A2-1 | 센서 데이터 저장 파이프라인 구축 | 14 | 56 |
-| A3-1 | Device Shadow JSON 스키마 정의 | 4 | 16 |
-| A3-2 | 웹앱 명령(Desired)과 기기 상태(Reported) 동기화 구현 | 10 | 40 |
-
----
-
-## 🤖 Autonomous Navigation (ROS2) Feature & User Story Backlog(588h)
-
-| ID | 유저스토리 (User Story) | SP | 시간 (h) |
-|----|-------------------------|----|----------|
-| B0-1 | ROS2 워크스페이스 / 빌드 환경 구성 (colcon) | 2 | 8 |
-| B0-2 | VSCode 개발환경 구성 | 2 | 8 |
-| B0-3 | 시뮬레이션 실행 환경 준비 (RViz) | 3 | 12 |
-| B0-4 | 로깅 / 디버깅 / 리플레이 (rosbag) 기반 구축 | 4 | 16 |
-| B1-1 | URDF 작성 | 5 | 20 |
-| B1-2 | TF 트리 구성 | 8 | 32 |
-| B1-3 | `/odom` 계산 및 발행 | 10 | 40 |
-| B1-4 | AMCL로 현재 위치 트래킹 및 튜닝 | 13 | 52 |
-| B2-1 | LiDAR 드라이버 연동 | 5 | 20 |
-| B2-2 | 2D 점유 격자 지도 생성 (SLAM) | 24 | 96 |
-| B2-3 | 지도 저장 및 불러오기 기능 | 5 | 20 |
-| B3-1 | 경로 생성 (Global Planner) | 8 | 32 |
-| B3-2 | 실시간 로컬 경로 수정 (Local Planner) | 22 | 88 |
-| B4-1 | 방 / 거실 영역 분할 | 13 | 52 |
-| B4-2 | 최적 정화 위치 선정 | 10 | 40 |
-| B4-3 | 공기질 취약 지역 우선 정화 경로 생성 | 13 | 52 |
-
----
-
-## 🍳 Event AI (Cooking Detection) Feature & User Story Backlog(356h)
-
-| ID | 유저스토리 (User Story) | SP | 시간 (h) |
-|----|-------------------------|----|----------|
-| C1-1 | 애매한 요리 이벤트 감지 시 부엌 이동 트리거 | 8 | 32 |
-| C1-2 | 부엌 도착 직전 녹화 시작 | 5 | 20 |
-| C1-3 | 부엌 도착 후 360도 회전 촬영 | 5 | 20 |
-| C1-4 | 요리 이벤트 최종 판단 및 복귀 | 8 | 32 |
-| C2-1 | 센서값 롤링 버퍼 형식 관리 | 5 | 20 |
-| C2-2 | 조기 예측 트리거 발생 시 센서 데이터 전달 | 8 | 32 |
-| C2-3 | 클라우드 기반 다음 이벤트 예측 | 8 | 32 |
-| C3-1 | 요리 검증 결과 데이터화 및 자동 삭제 | 5 | 20 |
-| C4-1 | 재학습용 요리 데이터 자동 수집 | 10 | 40 |
-| C4-2 | 모델 재학습 (Fine-tuning) 자동화 | 14 | 56 |
-| C5-1 | 요리 감지 AI 추론 엔진 및 라이브러리 설정 | 5 | 20 |
-| C5-2 | AWS SageMaker / S3 초기 환경 세팅 | 5 | 20 |
-| C6-1 | 요리 감지 모델 버전 관리 및 배포 정책 | 3 | 12 |
-
----
-
-## ⚙️ Hardware & Device Feature Backlog(196h)
-
-| ID | 유저스토리 (User Story) | SP | 시간 (h) |
-|----|-------------------------|----|----------|
-| D1-1 | 내부 센서 배치 및 설정 | 3 | 12 |
-| D1-2 | 간섭 체크 및 발열 시뮬레이션 | 4 | 16 |
-| D2-1 | 외형 구조물 3D 모델링 | 5 | 20 |
-| D2-2 | 센서 시야 최적화 (카메라, 라이다) | 4 | 16 |
-| D3-1 | 모터 PWM 제어 인터페이스 구현 | 4 | 16 |
-| D3-2 | 센서 데이터 수집 인터페이스 구현 | 4 | 16 |
-| D3-3 | 하드웨어 상태 모니터링 인터페이스 구현 | 4 | 16 |
-| D3-4 | USB 시리얼 통신 규약 설계 | 8 | 32 |
-| D3-5 | 엔코더 데이터를 읽어 바퀴의 회전수 계산 | 8 | 32 |
-| D3-6 | 배터리 잔량 확인 및 안전 관리 | 5 | 20 |
-
----
-
-## 📱 Web App Feature & User Story Backlog(288h)
-
-| ID | 유저스토리 (User Story) | SP | 시간 (h) |
-|----|-------------------------|----|----------|
-| E1-1 | 라즈베리파이로부터 맵 데이터 수신 | 4 | 16 |
-| E1-2 | 맵 데이터 요청 전송 (앱 → 라즈베리파이) | 3 | 12 |
-| E1-3 | 맵 데이터 최신화 로직 | 4 | 16 |
-| E1-4 | 맵 수신 실패 시 예외 처리 및 안내 | 2 | 8 |
-| E1-5 | 맵 시각화 표시 및 로봇 실시간 위치 확인 | 10 | 40 |
-| E1-6 | 맵 위 구역별 공기질 데이터 수신 및 갱신 | 5 | 20 |
-| E1-7 | 공기질 상태를 색상으로 맵에 오버레이 표시 | 6 | 24 |
-| E1-8 | 색상 범례 및 최신 갱신 시각 표시 | 3 | 12 |
-| E1-9 | 데이터 누락/지연 시 표시 정책 (회색 처리 등) | 2 | 8 |
-| E2-1 | On / Off로 AI 모드 제어 | 5 | 20 |
-| E3-1~5 | 기본 기능 (라벨링, 상태 표시, On/Off 등) | 10 | 40 |
-| E4-1 | AI 모드 작동 메뉴얼 표시 | 2 | 8 |
-| E4-2 | 감지된 이벤트 종류 표시 | 4 | 16 |
-| E5-1~3 | 오류 페이지 및 초기화 안내 | 2 | 8 |
-| E6-1 | 사용자 취침 / 기상 스케줄 설정 | 10 | 40 |
-
----
-
-## 📌 Feature & User Story Backlog (208h)
-
-| ID   | 유저스토리 (User Story) | SP | 시간 (h) |
-|------|-------------------------|----|----------|
-| F1-1 | 구역별 360도 회전 촬영 및 활동 판단 | 7  | 28 |
-| F2-1 | YOLO 기반 Active Person 판단 로직 | 8  | 32 |
-| F2-2 | Sleeping / Lying Person 필터링 정책 적용 | 6  | 24 |
-| F3-1 | 구역별 데이터 합산을 통한 최종 판단 | 5  | 20 |
-| F4-1 | 저전력 모드 전환 및 웹 스케줄 우선 적용 | 5  | 20 |
-| F4-2 | 재활성화 로직 | 3  | 12 |
-| F5-1 | 라즈베리파이 추론 환경 구축 | 5  | 20 |
-| F5-2 | Google Colab 학습 파이프라인 구축 | 10 | 40 |
-| F6-1 | 모델 성능 모니터링 및 업데이트 | 3  | 12 |
-
-### 합계: 360sp/1440h
-
-##
+*   **사각지대 없는 전 구역 공기청정:** 자율주행 기능을 통해 단 1대의 로봇이 실내 전 구역을 순회하므로 넓은 공간에서의 사각지대 문제를 해소합니다.
+*   **진입 장벽 완화:** 외부 환경 센서를 별도로 설치해야 하는 기존 고가 제품들과 달리, 공기질 센서를 본체에 내장하여 단일 기기만으로 작동 가능하므로 초기 설치 부담이 낮습니다.
+*   **확장성:** 청정 기능을 제외하고 공기질 센서만으로 다중 공간(급식실, 매장 등)의 대기를 측정하는 순찰 로봇으로도 활용 가치가 있습니다.
