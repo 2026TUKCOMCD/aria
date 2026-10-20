@@ -1,6 +1,7 @@
 import os
 import csv
 import json
+import time
 import requests
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +11,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from std_msgs.msg import String, Empty
+from action_msgs.msg import GoalStatus
 from nav2_msgs.action import NavigateToPose
 
 
@@ -38,6 +40,11 @@ class DataCollectorNode(Node):
         self.declare_parameter('pm25_max', 100.0)
         self.declare_parameter('voc_max', 150.0)
 
+        # 집중정화: 도착 후 팬을 켜고, 회복되거나 최대 시간이 지날 때까지 머문다.
+        self.declare_parameter('purify_fan_speed', 255)
+        self.declare_parameter('purify_min_sec', 60.0)    # 최소 정화 시간(센서 반응 지연 고려)
+        self.declare_parameter('purify_max_sec', 600.0)   # 구역당 최대 정화 시간(10분)
+
         self._robot_id = self.get_parameter('robot_id').get_parameter_value().string_value
         self._server_url = str(self.get_parameter('server_url').get_parameter_value().string_value).rstrip('/')
         self._auth_token = self.get_parameter('auth_token').get_parameter_value().string_value
@@ -45,6 +52,9 @@ class DataCollectorNode(Node):
         self._threshold_bad = self.get_parameter('threshold_bad').get_parameter_value().double_value
         self._pm25_max = self.get_parameter('pm25_max').get_parameter_value().double_value
         self._voc_max = self.get_parameter('voc_max').get_parameter_value().double_value
+        self._purify_fan_speed = int(self.get_parameter('purify_fan_speed').value)
+        self._purify_min_sec = float(self.get_parameter('purify_min_sec').value)
+        self._purify_max_sec = float(self.get_parameter('purify_max_sec').value)
 
         # 데이터 저장을 위한 CSV 설정 (기존 data_collector 기능 유지)
         self.save_dir = os.path.expanduser('~/aria_ai_system/data')
@@ -74,6 +84,12 @@ class DataCollectorNode(Node):
 
         # 웹앱용 구역별 공기질 등급 업로드 (air_purify_scheduler_node 흡수)
         self.air_quality_pub = self.create_publisher(String, '/aria/zone_air_quality', 10)
+
+        # 집중정화용 팬 제어
+        self.fan_pub = self.create_publisher(String, '/esp32/fan_cmd', 10)
+        self._dwell_started = None      # 현재 구역에서 정화를 시작한 시각
+        self._score_before = None       # 정화 시작 시점 점수(개선량 기록용)
+        self.create_timer(1.0, self._purify_dwell_tick)
 
         # 순회/정화 상태
         self.state = 'IDLE'  # IDLE, PATROLLING, PURIFYING
@@ -113,6 +129,7 @@ class DataCollectorNode(Node):
             return
         self.get_logger().warn('🛑 순회/정화가 외부 요청으로 중단되었습니다. IDLE로 전환합니다.')
         self._cancel_current_goal()
+        self._end_dwell(fan_off=True)
         self.state = 'IDLE'
         self.patrol_queue.clear()
         self.purify_queue.clear()
@@ -217,9 +234,16 @@ class DataCollectorNode(Node):
 
     def get_result_callback(self, future):
         self._current_goal_handle = None
-        if self.current_target_zone is None:
+        if self.current_target_zone is None or self.state == 'IDLE':
             return
         zone_name = self.current_target_zone.get('name')
+
+        # 도착하지 못했으면 그 구역 값으로 기록·정화하지 않는다.
+        status = future.result().status
+        if status != GoalStatus.STATUS_SUCCEEDED:
+            self.get_logger().warn(f"⚠️ '{zone_name}' 이동 실패(status={status}). 이 구역은 건너뜁니다.")
+            self.visit_next_zone()
+            return
 
         if self.state == 'PATROLLING':
             measured_score = self._current_air_score
@@ -228,9 +252,51 @@ class DataCollectorNode(Node):
             self.visit_next_zone()
 
         elif self.state == 'PURIFYING':
-            self.get_logger().info(f"✨ '{zone_name}' 집중 정화 완료. 최종 개선 데이터를 업로드합니다.")
-            self.upload_air_quality_to_cloud(self.current_target_zone)
-            self.visit_next_zone()
+            # 이전 버전은 도착 즉시 점수를 올리고 다음 구역으로 넘어갔다(정화 없음).
+            # 이제는 팬을 켜고 머물며, _purify_dwell_tick이 종료 시점을 판단한다.
+            self._score_before = self._current_air_score
+            self._dwell_started = time.time()
+            self._send_fan(self._purify_fan_speed)
+            self.get_logger().info(
+                f"🌀 '{zone_name}' 집중 정화 시작 (시작 점수 {self._score_before:.1f}, "
+                f"최소 {self._purify_min_sec:.0f}s / 최대 {self._purify_max_sec:.0f}s)"
+            )
+
+    # ──────────────────────────────────────────────
+    # 집중정화 체류
+    # ──────────────────────────────────────────────
+
+    def _send_fan(self, speed: int):
+        msg = String()
+        msg.data = json.dumps({'fan': int(speed)})
+        self.fan_pub.publish(msg)
+
+    def _end_dwell(self, fan_off: bool):
+        if self._dwell_started is not None and fan_off:
+            self._send_fan(0)
+        self._dwell_started = None
+
+    def _purify_dwell_tick(self):
+        if self.state != 'PURIFYING' or self._dwell_started is None:
+            return
+        elapsed = time.time() - self._dwell_started
+        score = self._current_air_score
+        recovered = 0 <= score < self._threshold_good
+
+        if elapsed < self._purify_min_sec:
+            return
+        if not recovered and elapsed < self._purify_max_sec:
+            return
+
+        zone_name = self.current_target_zone.get('name')
+        reason = '회복' if recovered else '최대 시간 도달'
+        self.get_logger().info(
+            f"✨ '{zone_name}' 집중 정화 종료({reason}, {elapsed:.0f}s): "
+            f"{self._score_before:.1f} → {score:.1f}. 정화 후 결과를 업로드합니다."
+        )
+        self._end_dwell(fan_off=True)
+        self.upload_air_quality_to_cloud(self.current_target_zone)
+        self.visit_next_zone()
 
     def _write_csv_row(self, zone_name):
         now = datetime.now()

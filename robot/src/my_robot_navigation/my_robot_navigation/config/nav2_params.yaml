@@ -187,14 +187,36 @@ local_costmap:
       height: 3
       resolution: 0.05
       footprint: "[ [0.16, 0.125], [0.16, -0.125], [-0.20, -0.125], [-0.20, 0.125] ]"
-      plugins: ["static_layer", "inflation_layer"]
+      # voxel_layer(라이다)는 설정만 있고 목록에 빠져 있어 주행 중 새 장애물을 못 봤다 → 추가
+      plugins: ["static_layer", "voxel_layer", "tof_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.0
         inflation_radius: 0.30
+      # ToF 전용 장애물 레이어 — 라이다(높이 44cm)가 놓치는 낮은 장애물 보완.
+      # 별도 레이어로 둔 이유: ToF가 '비어 있음'으로 지우는 동작(clearing)이
+      # 다른 센서가 표시한 장애물까지 지우지 않도록, 자기 표시만 관리하게 한다.
+      tof_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        footprint_clearing_enabled: True
+        observation_sources: tof
+        tof:
+          topic: /scan_tof
+          data_type: "LaserScan"
+          marking: True
+          clearing: True
+          inf_is_valid: True          # inf(측정값 없음) = range_max까지 비어 있음 → 지우기
+          obstacle_max_range: 1.0     # 이 거리 안의 물체만 장애물로 표시
+          obstacle_min_range: 0.0
+          raytrace_max_range: 1.2
+          raytrace_min_range: 0.0
+          max_obstacle_height: 0.5
+          expected_update_rate: 0.5   # 10Hz 발행, 0.5초 넘게 안 오면 경고
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: True
+        footprint_clearing_enabled: True   # 로봇 몸체 자리에 찍힌 점은 지운다
         publish_voxel_map: True
         origin_z: 0.0
         z_resolution: 0.05

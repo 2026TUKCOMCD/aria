@@ -6,7 +6,7 @@ from pathlib import Path
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 from geometry_msgs.msg import PoseWithCovarianceStamped
 
 from AWSIoTPythonSDK.MQTTLib import AWSIoTMQTTClient
@@ -46,7 +46,8 @@ class AriaMqttNode(Node):
             "sensors": {"pm25": 0, "voc": 0, "temperature": 0.0, "humidity": 0.0},
             # ── [추가] 실시간 공기질 점수와 등급 상태 ──
             "air_score": 0,
-            "air_grade": "좋음"
+            "air_grade": "좋음",
+            "sleeping": False,
         }
 
         # ── ROS2 구독 (Subscribe) ──
@@ -57,6 +58,7 @@ class AriaMqttNode(Node):
         # 컨트롤러 상태 및 이벤트 피드백 구독
         self.create_subscription(String, "/aria/mode_state", self._on_mode_state, 10)
         self.create_subscription(String, "/aria/nav_event", self._on_nav_event, 10)
+        self.create_subscription(Bool, "/aria/sleep_state", self._on_sleep_state, 10)
         
         # 스케줄러 공기질 DB 갱신용 구독
         self.create_subscription(String, "/aria/zone_air_quality", self.zone_air_callback, 10)
@@ -65,6 +67,8 @@ class AriaMqttNode(Node):
         self.mode_pub  = self.create_publisher(String, "/aria/mode_command", 10) 
         self.motor_pub = self.create_publisher(String, "/esp32/motor_cmd", 10) 
         self.manual_move_pub = self.create_publisher(String, "/aria/manual_move_command", 10)
+        # 웹앱에서 저장한 수면 스케줄을 컨트롤러로 전달 (aria/{id}/cmd/schedule, retained)
+        self.sleep_schedule_pub = self.create_publisher(String, "/aria/sleep_schedule", 10)
 
         # 주기적 클라우드 상태 보고 전송 (5초)
         self.create_timer(5.0, self.publish_status_to_cloud)
@@ -281,6 +285,19 @@ class AriaMqttNode(Node):
             topic = message.topic
             self.get_logger().info(f"[MQTT 수신] topic={topic}, payload={payload}")
             
+            # 0. 수면 스케줄 (AriaScheduleManager가 retained로 발행 → 재접속 시에도 수신)
+            if topic.endswith("/cmd/schedule"):
+                sched = {
+                    "sleep_time": payload.get("sleep_time"),
+                    "wake_time": payload.get("wake_time"),
+                    "enabled": bool(payload.get("enabled", True)),
+                }
+                out = String()
+                out.data = json.dumps(sched)
+                self.sleep_schedule_pub.publish(out)
+                self.get_logger().info(f"[수면 스케줄 수신] {sched}")
+                return
+
             # 1. 기존 target/action 방식 명령 처리
             if "target" in payload and "action" in payload:
                 target = payload.get("target")
@@ -334,6 +351,9 @@ class AriaMqttNode(Node):
 
         except Exception as e:
             self.get_logger().error(f"명령 처리 오류: {e}")
+
+    def _on_sleep_state(self, msg: Bool):
+        self.current_status["sleeping"] = bool(msg.data)
 
     def _predict_callback(self, client, userdata, message):
         """[명세 반영] AI 판단 결과 수신 (res/predict)"""

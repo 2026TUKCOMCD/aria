@@ -60,6 +60,15 @@ class AriaControllerNode(Node):
         self.declare_parameter('auth_token', os.environ.get('ARIA_AUTH_TOKEN', ''))
 
         self.declare_parameter('purify_interval', 14400.0)  # AI모드 순회 재실행 주기 (4시간)
+        # 순회+집중정화 전체를 기다리는 최대 시간. 집중정화가 구역당 최대 10분이므로
+        # 600초로는 부족하다(넘기면 순회 중에 예측청정이 켜져 두 노드가 충돌).
+        self.declare_parameter('purify_cycle_timeout', 3600.0)
+
+        # 수면 시간 기본값. 웹앱에서 저장한 값이 MQTT(/aria/sleep_schedule)로 오면 덮어쓴다.
+        self.declare_parameter('sleep_time', '23:00')
+        self.declare_parameter('wake_time', '07:00')
+        self.declare_parameter('sleep_enabled', True)
+        self.declare_parameter('sleep_schedule_file', os.path.expanduser('~/aria_ai_system/sleep_schedule.json'))
 
         # 기본모드 점수 계산 (data_collector_node와 동일 공식/기본값)
         self.declare_parameter('threshold_good', 30.0)
@@ -79,6 +88,12 @@ class AriaControllerNode(Node):
         self.base_api_url = str(self.get_parameter('base_api_url').value).rstrip('/')
         self.auth_token = self.get_parameter('auth_token').value
         self.purify_interval = float(self.get_parameter('purify_interval').value)
+        self.purify_cycle_timeout = float(self.get_parameter('purify_cycle_timeout').value)
+        self.sleep_schedule_file = self.get_parameter('sleep_schedule_file').value
+        self._sleep_time = self._parse_hhmm(self.get_parameter('sleep_time').value, dt_time(23, 0))
+        self._wake_time = self._parse_hhmm(self.get_parameter('wake_time').value, dt_time(7, 0))
+        self._sleep_enabled = bool(self.get_parameter('sleep_enabled').value)
+        self._load_sleep_schedule_file()  # 재부팅·오프라인 대비 마지막 저장값 복원
         self.threshold_good = float(self.get_parameter('threshold_good').value)
         self._pm25_max = float(self.get_parameter('pm25_max').value)
         self._voc_max = float(self.get_parameter('voc_max').value)
@@ -96,6 +111,8 @@ class AriaControllerNode(Node):
         self._ai_purify_timer_start = None
         self._purify_retrigger_in_progress = False
         self._current_air_score = -1.0
+        self._sleeping = False          # 수면 시간이라 AI를 멈춘 상태인가
+        self._ai_active_state = False   # 마지막으로 발행한 /aria/ai_active 값
         self._tier2_proc = None
         self._tier2_profile = None
 
@@ -110,6 +127,7 @@ class AriaControllerNode(Node):
         self.create_subscription(String, '/aria/mode_command', self._on_mode_command, 10)
         self.create_subscription(String, '/aria/manual_move_command', self._on_manual_move_command, 10)
         self.create_subscription(Empty, '/aria/purify_cycle_done', self._on_purify_cycle_done, 10)
+        self.create_subscription(String, '/aria/sleep_schedule', self._on_sleep_schedule, 10)
 
         # explore_lite가 이미 발행하는 탐사 상태 토픽 (explore_lite_msgs/ExploreStatus).
         # EXPLORATION_COMPLETE가 오면 매핑이 끝난 것으로 간주한다.
@@ -130,6 +148,8 @@ class AriaControllerNode(Node):
         self.purify_trigger_pub = self.create_publisher(Empty, '/aria/start_purify_cycle', 10)
         self.purify_abort_pub = self.create_publisher(Empty, '/aria/purify_abort', 10)
         self.motor_cmd_pub = self.create_publisher(String, '/esp32/motor_cmd', 10)
+        self.fan_cmd_pub = self.create_publisher(String, '/esp32/fan_cmd', 10)
+        self.sleep_state_pub = self.create_publisher(Bool, '/aria/sleep_state', 10)
 
         # AI모드 4시간 재실행 감시 (1초 주기)
         self.create_timer(1.0, self._ai_mode_tick)
@@ -199,19 +219,31 @@ class AriaControllerNode(Node):
         threading.Thread(target=self._ai_mode_worker, daemon=True).start()
 
     def _ai_mode_worker(self):
+        if self._is_night_time():
+            # 수면 중에 AI모드가 켜지면 순회도 예측도 하지 않는다.
+            # 기상 시각에 예측청정만 켜고, 순회는 그때부터 4시간 주기로 돈다.
+            self.get_logger().info('수면 시간이므로 기상 시각까지 대기합니다.')
+            self._purify_retrigger_in_progress = False
+            return
         self._run_purify_cycle_and_wait()
         if self.mode != 'AI':
             return  # 대기중 다른 모드로 전환됨
         self._ai_purify_timer_start = time.time()
         self._set_ai_active(True)
 
-    def _run_purify_cycle_and_wait(self, timeout: float = 600.0):
+    def _run_purify_cycle_and_wait(self):
         self._purify_done_event.clear()
         self.purify_trigger_pub.publish(Empty())
-        self._purify_done_event.wait(timeout=timeout)
+        finished = self._purify_done_event.wait(timeout=self.purify_cycle_timeout)
+        if not finished:
+            # 끝나지 않은 순회를 그대로 두면 예측청정과 이동 목표가 겹친다. 명시적으로 중단.
+            self.get_logger().warn(f'순회가 {self.purify_cycle_timeout:.0f}s 안에 끝나지 않아 중단합니다.')
+            self.purify_abort_pub.publish(Empty())
+        return finished
 
     def _ai_mode_tick(self):
-        if self.mode != 'AI':
+        self._update_sleep_state()
+        if self.mode != 'AI' or self._sleeping:
             return
         if self._ai_purify_timer_start is None:
             return  # 최초 순회가 아직 안 끝남
@@ -220,8 +252,6 @@ class AriaControllerNode(Node):
         elapsed = time.time() - self._ai_purify_timer_start
         if elapsed < self.purify_interval:
             return
-        if self._is_night_time():
-            return  # 야간엔 재실행을 미루고 다음 틱에 다시 확인
         self._purify_retrigger_in_progress = True
         self._set_ai_active(False)
         threading.Thread(target=self._rerun_purify_cycle, daemon=True).start()
@@ -229,7 +259,7 @@ class AriaControllerNode(Node):
     def _rerun_purify_cycle(self):
         try:
             self._run_purify_cycle_and_wait()
-            if self.mode != 'AI':
+            if self.mode != 'AI' or self._sleeping:
                 return
             self._ai_purify_timer_start = time.time()
             self._set_ai_active(True)
@@ -239,13 +269,89 @@ class AriaControllerNode(Node):
     def _on_purify_cycle_done(self, msg: Empty):
         self._purify_done_event.set()
 
+    # ══════════════════════════════════════════════════
+    # 수면(절전) 시간
+    # ══════════════════════════════════════════════════
+    #
+    # 이전 버전: 23~07시 하드코딩, 그것도 '재순회만 미룸' — ai_active는 켜진 채라
+    #           ai_cleaner가 밤새 10초마다 예측·이동했다.
+    # 현재: 사용자가 웹앱에서 저장한 수면시간을 MQTT로 받아 파일에 보관하고,
+    #       수면 구간에 들어서면 순회 중단 + 예측청정 정지(ai_active=False) + 팬 정지,
+    #       기상 시각이 되면 AI모드였던 경우 예측청정만 다시 켠다(즉시 재순회 없음).
+
     @staticmethod
-    def _is_night_time() -> bool:
+    def _parse_hhmm(value, default: dt_time) -> dt_time:
+        try:
+            h, m = str(value).strip().split(':')[:2]
+            return dt_time(int(h), int(m))
+        except Exception:
+            return default
+
+    def _is_night_time(self) -> bool:
+        if not self._sleep_enabled:
+            return False
         now = datetime.now().time()
-        start, end = dt_time(23, 0), dt_time(7, 0)
-        if start <= end:
-            return start <= now <= end
-        return now >= start or now <= end
+        start, end = self._sleep_time, self._wake_time
+        if start == end:
+            return False
+        if start < end:
+            return start <= now < end
+        return now >= start or now < end
+
+    def _on_sleep_schedule(self, msg: String):
+        try:
+            data = json.loads(msg.data)
+        except Exception as e:
+            self.get_logger().error(f'수면 스케줄 파싱 실패: {e}')
+            return
+        self._apply_sleep_schedule(data)
+        try:
+            os.makedirs(os.path.dirname(self.sleep_schedule_file), exist_ok=True)
+            with open(self.sleep_schedule_file, 'w') as f:
+                json.dump(data, f)
+        except Exception as e:
+            self.get_logger().warn(f'수면 스케줄 저장 실패: {e}')
+
+    def _load_sleep_schedule_file(self):
+        try:
+            with open(self.sleep_schedule_file) as f:
+                self._apply_sleep_schedule(json.load(f))
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            self.get_logger().warn(f'수면 스케줄 파일 읽기 실패: {e}')
+
+    def _apply_sleep_schedule(self, data: dict):
+        self._sleep_time = self._parse_hhmm(data.get('sleep_time'), self._sleep_time)
+        self._wake_time = self._parse_hhmm(data.get('wake_time'), self._wake_time)
+        self._sleep_enabled = bool(data.get('enabled', self._sleep_enabled))
+        self.get_logger().info(
+            f'수면 스케줄 적용: {self._sleep_time:%H:%M} ~ {self._wake_time:%H:%M} '
+            f'(사용={self._sleep_enabled})'
+        )
+
+    def _update_sleep_state(self):
+        night = self._is_night_time()
+        if night == self._sleeping:
+            return
+        self._sleeping = night
+        self.sleep_state_pub.publish(Bool(data=night))
+
+        if night:
+            self.get_logger().info('🌙 수면 시간 진입: 순회·예측청정·팬을 정지합니다.')
+            if self.mode == 'AI':
+                self.purify_abort_pub.publish(Empty())
+                self._purify_done_event.set()  # 대기 중인 순회 스레드를 풀어준다
+                self._set_ai_active(False, force=True)
+                self._publish_fan(0)
+        else:
+            self.get_logger().info('☀️ 기상 시각: AI모드라면 예측청정을 다시 켭니다.')
+            if self.mode == 'AI':
+                # 기상 직후 순회는 하지 않는다. 예측청정만 재개하고,
+                # 다음 순회는 지금부터 purify_interval(4시간) 뒤에 돈다.
+                self._ai_purify_timer_start = time.time()
+                self._purify_retrigger_in_progress = False
+                self._set_ai_active(True)
 
     # ══════════════════════════════════════════════════
     # 매핑
@@ -629,10 +735,20 @@ class AriaControllerNode(Node):
     # 기타 헬퍼
     # ══════════════════════════════════════════════════
 
-    def _set_ai_active(self, active: bool):
+    def _set_ai_active(self, active: bool, force: bool = False):
+        # 수면 중에는 어떤 경로로도 예측청정을 켜지 않는다(단일 관문).
+        if active and self._sleeping and not force:
+            self.get_logger().info('수면 시간이므로 예측청정 활성화를 보류합니다.')
+            active = False
+        self._ai_active_state = active
         msg = Bool()
         msg.data = active
         self.ai_active_pub.publish(msg)
+
+    def _publish_fan(self, speed: int):
+        msg = String()
+        msg.data = json.dumps({'fan': int(speed)})
+        self.fan_cmd_pub.publish(msg)
 
     def _publish_motor_stop(self):
         msg = String()

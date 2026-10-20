@@ -27,6 +27,21 @@ class Esp32WheelOdomNode(Node):
 
         self.tf_broadcaster = TransformBroadcaster(self)
 
+        # ── ToF → LaserScan 변환 설정 ──
+        # 펌웨어 기준 배치: ToF1=좌, ToF2=우, ToF3=중앙 (main.cpp XSHUT 핀 주석).
+        # ROS 규약상 각도는 +가 왼쪽(반시계), -가 오른쪽이다.
+        # 실제 장착 각도가 다르면 아래 파라미터만 바꾸면 된다.
+        self.declare_parameter('tof1_angle_deg', 45.0)    # 좌
+        self.declare_parameter('tof2_angle_deg', -45.0)   # 우
+        self.declare_parameter('tof3_angle_deg', 0.0)     # 중앙
+        self.declare_parameter('tof_fov_deg', 25.0)       # VL53L0X 시야각
+        self.declare_parameter('tof_ray_step_deg', 2.5)   # 시야각을 몇 도 간격 빔으로 채울지
+        self.declare_parameter('tof_range_max', 1.2)      # VL53L0X 기본 모드 신뢰 거리(m)
+        self.tof_angles = [math.radians(self.get_parameter(f'tof{i}_angle_deg').value) for i in (1, 2, 3)]
+        self.tof_half_fov = math.radians(self.get_parameter('tof_fov_deg').value) / 2.0
+        self.tof_step = math.radians(self.get_parameter('tof_ray_step_deg').value)
+        self.tof_range_max = float(self.get_parameter('tof_range_max').value)
+
         self.wheel_base   = 0.2475
         self.speed_to_pwm = 350.0
         self.left_coeff   = 0.97
@@ -164,20 +179,50 @@ class Esp32WheelOdomNode(Node):
     # ──────────────────────────────────────────────
 
     def publish_tof_scan(self, packet, now):
+        """ToF 3개를 Nav2가 읽을 수 있는 LaserScan(/scan_tof)으로 변환한다.
+
+        이전 버전의 문제
+          - 센서 1개당 빔 1개(점 3개)뿐이라, 25° 시야각 안의 장애물을 점으로만 표시했다.
+          - ranges 순서가 [ToF1(좌), ToF3, ToF2(우)]인데 angle_min이 -45°(오른쪽)라
+            좌우가 뒤바뀌어 있었다.
+        현재
+          - 각 센서의 시야각(±12.5°)을 tof_ray_step_deg 간격 빔으로 채운다.
+          - 센서 사이 빈 구간은 NaN → Nav2가 무시(표시도 지우지도 않음).
+          - 측정값 없음(-1: 범위 밖 등)은 inf → 'range_max까지 비어 있음'으로 처리해
+            사람이 지나간 뒤 남은 장애물 표시를 지운다(Nav2 inf_is_valid).
+        """
+        readings = []
+        for key in ('tof1', 'tof2', 'tof3'):
+            raw = float(packet.get(key, -1.0))
+            if raw > 0:
+                readings.append(raw / 1000.0)   # mm → m
+            else:
+                readings.append(float('inf'))
+
+        lo = min(self.tof_angles) - self.tof_half_fov
+        hi = max(self.tof_angles) + self.tof_half_fov
+        n = int(round((hi - lo) / self.tof_step)) + 1
+
+        ranges = []
+        for i in range(n):
+            ang = lo + i * self.tof_step
+            value = float('nan')
+            for center, dist in zip(self.tof_angles, readings):
+                if abs(ang - center) <= self.tof_half_fov + 1e-6:
+                    # 시야각이 겹치면 더 가까운 값을 쓴다(장애물 우선).
+                    value = dist if math.isnan(value) else min(value, dist)
+            ranges.append(value)
+
         msg = LaserScan()
         msg.header.stamp    = now
         msg.header.frame_id = "tof_frame"
-        msg.angle_min       = -math.radians(45.0)
-        msg.angle_max       =  math.radians(45.0)
-        msg.angle_increment =  math.radians(45.0)
-        msg.scan_time       = 0.05
+        msg.angle_min       = lo
+        msg.angle_max       = lo + (n - 1) * self.tof_step
+        msg.angle_increment = self.tof_step
+        msg.scan_time       = 0.1          # NavPacket 10Hz
         msg.range_min       = 0.02
-        msg.range_max       = 2.0
-
-        t1 = float(packet['tof1']) / 1000.0 if packet['tof1'] > 0 else float('inf')
-        t2 = float(packet['tof2']) / 1000.0 if packet['tof2'] > 0 else float('inf')
-        t3 = float(packet['tof3']) / 1000.0 if packet['tof3'] > 0 else float('inf')
-        msg.ranges = [t1, t3, t2]
+        msg.range_max       = self.tof_range_max
+        msg.ranges = ranges
         self.tof_pub.publish(msg)
 
     def publish_imu(self, packet, now):
