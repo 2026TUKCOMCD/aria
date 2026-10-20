@@ -7,7 +7,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     robot_id   = LaunchConfiguration('robot_id')
-    # aria_controller_node/air_purify_scheduler_node는 robot_id를 문자열로 선언한다.
+    # aria_controller_node/data_collector_node는 robot_id를 문자열로 선언한다.
     # LaunchConfiguration을 파라미터 dict에 그대로 넣으면 launch가 임시 params
     # yaml에 따옴표 없이 써서 "1"이 정수로 오인되어 InvalidParameterTypeException이
     # 난다 (charging_pose_initializer는 robot_id를 int로 선언해서 우연히 안 걸림).
@@ -90,24 +90,27 @@ def generate_launch_description():
         }],
     )
 
-    cooking_ai_node = Node(
-        package='robot_bringup',
-        executable='aria_cooking_ai_node',
-        name='aria_cooking_ai_node',
+    # 신버전 AI (my_robot_ai_control) — aria_controller_node의 /aria/ai_active
+    # 신호를 따른다. data_collector_node가 구버전 air_purify_scheduler_node의
+    # 순회/집중정화/웹앱 업로드 역할을 흡수했고, 구버전 요리AI(카메라+YOLO)는
+    # 신버전으로 대체되어 제거되었다.
+    data_collector_node = Node(
+        package='my_robot_ai_control',
+        executable='data_collector',
+        name='data_collector_node',
         output='screen',
         parameters=[{
-            'kitchen_zone_name': 'kitchen',
+            'robot_id': robot_id_str,
         }],
     )
 
-    scheduler_node = Node(
-        package='robot_bringup',
-        executable='air_purify_scheduler_node',
-        name='air_purify_scheduler_node',
+    ai_cleaner_node = Node(
+        package='my_robot_ai_control',
+        executable='ai_cleaner',
+        name='ai_cleaner_node',
         output='screen',
         parameters=[{
-            'robot_id':   robot_id_str,
-            # server_url 강제 주입 제거 (파이썬 코드에서 .env를 읽도록 유도)
+            'robot_id': robot_id_str,
         }],
     )
 
@@ -124,6 +127,6 @@ def generate_launch_description():
         charging_pose_initializer_node,
         mqtt_node,
         controller_node,
-        cooking_ai_node,
-        scheduler_node,
+        data_collector_node,
+        ai_cleaner_node,
     ])

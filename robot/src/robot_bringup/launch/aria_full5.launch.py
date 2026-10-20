@@ -47,16 +47,16 @@ def generate_launch_description():
         ),
 
         Node(
-            package="robot_bringup",
-            executable="aria_cooking_ai_node",
-            name="aria_cooking_ai_node",
+            package="my_robot_ai_control",
+            executable="data_collector",
+            name="data_collector_node",
             output="screen",
         ),
 
         Node(
-            package="robot_bringup",
-            executable="air_purify_scheduler_node",
-            name="air_purify_scheduler_node",
+            package="my_robot_ai_control",
+            executable="ai_cleaner",
+            name="ai_cleaner_node",
             output="screen",
         ),
     ])
