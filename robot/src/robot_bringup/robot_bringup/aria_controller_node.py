@@ -28,17 +28,19 @@ load_dotenv(dotenv_path=_dotenv_path, override=True)
 class AriaControllerNode(Node):
     """ARIA 메인 통합(상태머신) 노드.
 
-    "모든 노드를 컨트롤하는 메인 통합 노드" 그 자체 — 요리감지 AI는
-    aria_cooking_ai_node로 분리되어 여기엔 torch/YOLO 의존성이 없다.
+    "모든 노드를 컨트롤하는 메인 통합 노드" 그 자체 — AI(순회/예측청정)
+    노드들은 my_robot_ai_control(data_collector_node, ai_cleaner_node)로
+    분리되어 여기엔 pandas/scikit-learn 등 무거운 AI 의존성이 없다.
 
-    모드: STANDBY(대기) / AI(순회+요리감지) / MAPPING(매핑) / BASIC(기본모드)
+    모드: STANDBY(대기) / AI(순회+예측청정) / MAPPING(매핑) / BASIC(기본모드)
     초기 상태는 항상 STANDBY — 부팅 즉시 순회를 시작하지 않는다.
 
     이 노드가 유일하게 소유하는 것:
       - 수동이동/기본모드/매핑귀환용 NavigateToPose ActionClient
-        (patrol 전용 ActionClient는 air_purify_scheduler_node,
-         주방이동 전용 ActionClient는 aria_cooking_ai_node가 각자 소유 —
-         활성 구간이 상태머신에 의해 서로 겹치지 않도록 보장된다)
+        (순회/집중정화 전용 ActionClient는 data_collector_node,
+         예측청정 이동 전용 ActionClient는 ai_cleaner_node가 각자 소유 —
+         활성 구간이 /aria/ai_active와 /aria/start_purify_cycle↔
+         /aria/purify_cycle_done 핸드셰이크로 서로 겹치지 않도록 보장된다)
       - AMCL(LOCALIZE) <-> SLAM+explore_lite(MAP) 서브프로세스 스왑
         (ROS2 launch는 실행 중인 트리 일부만 재시작할 수 없어서 직접
          `ros2 launch`를 subprocess로 관리한다 — "launch 상시 실행" 원칙의
@@ -59,7 +61,7 @@ class AriaControllerNode(Node):
 
         self.declare_parameter('purify_interval', 14400.0)  # AI모드 순회 재실행 주기 (4시간)
 
-        # 기본모드 점수 계산 (air_purify_scheduler_node와 동일 공식/기본값)
+        # 기본모드 점수 계산 (data_collector_node와 동일 공식/기본값)
         self.declare_parameter('threshold_good', 30.0)
         self.declare_parameter('pm25_max', 100.0)
         self.declare_parameter('voc_max', 150.0)
@@ -194,7 +196,7 @@ class AriaControllerNode(Node):
         self.mode = 'AI'
         self._ai_purify_timer_start = None
         self._publish_mode_state()
-        #threading.Thread(target=self._ai_mode_worker, daemon=True).start()
+        threading.Thread(target=self._ai_mode_worker, daemon=True).start()
 
     def _ai_mode_worker(self):
         self._run_purify_cycle_and_wait()
