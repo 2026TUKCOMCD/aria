@@ -75,12 +75,25 @@ def lambda_handler(event, context):
         cursor.execute(upsert_query, (robot_id, wake_time, sleep_time, enabled))
         conn.commit()
         
-        # 2. EventBridge 스케줄러 설정 (타겟을 '이 람다 함수 자신'으로 지정)
-        state = 'ENABLED' if enabled else 'DISABLED'
-        lambda_arn = context.invoked_function_arn # 자기 자신의 ARN을 가져옴
-        
-        upsert_scheduler(robot_id, 'wake', wake_time, 'TURN_ON', state, lambda_arn)
-        upsert_scheduler(robot_id, 'sleep', sleep_time, 'TURN_OFF', state, lambda_arn)
+        # 2. 로봇에 스케줄 자체를 전달 (retained → 로봇이 재접속해도 마지막 값을 받음)
+        #    이전 방식(EventBridge가 정해진 시각에 POWER TURN_OFF/ON 발행)은 로봇이
+        #    모터만 한 번 멈추고 AI모드를 유지해서 수면 절전이 실제로 일어나지 않았다.
+        #    이제 판단은 로봇 컨트롤러가 로컬 시계로 하므로 네트워크가 끊겨도 동작한다.
+        iot_client.publish(
+            topic=f"aria/{robot_id}/cmd/schedule",
+            qos=1,
+            retain=True,
+            payload=json.dumps({"sleep_time": sleep_time, "wake_time": wake_time, "enabled": enabled}),
+        )
+
+        # 예전 방식으로 만들어 둔 EventBridge 알람이 남아 있으면 정리한다.
+        for schedule_type in ('wake', 'sleep'):
+            try:
+                scheduler_client.delete_schedule(Name=f"aria_{robot_id}_{schedule_type}_schedule")
+            except scheduler_client.exceptions.ResourceNotFoundException:
+                pass
+            except Exception as e:  # 권한(scheduler:DeleteSchedule) 없음 등 — 저장 자체는 성공 처리
+                print(f"옛 EventBridge 스케줄 정리 실패(무시): {e}")
             
         return {
             'statusCode': 200,

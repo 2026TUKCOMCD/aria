@@ -1,19 +1,28 @@
 #!/bin/bash
+# ARIA 심야 자동 학습 등록 스크립트
+#
+# - 이 스크립트가 있는 폴더(저장소 안)의 night_training.py를 cron이 직접 실행한다.
+#   → git pull만 하면 다음 날 새벽부터 새 학습 코드가 쓰인다(따로 복사할 필요 없음).
+# - 예전에 등록된 night_training.py 항목(복사본 경로 포함)은 모두 지우고 새로 등록한다.
+# - 등록 직후 한 번 바로 학습해서, 새 형식 모델을 지금 만들어 둔다.
 
-# 파이썬 실행기 및 스크립트 절대 경로 설정
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_EXEC="/usr/bin/python3"
-SCRIPT_PATH="$HOME/aria_ai_system/scripts/night_training.py"
-LOG_PATH="$HOME/aria_ai_system/data/night_training.log"
+SCRIPT_PATH="$SCRIPT_DIR/night_training.py"
+LOG_DIR="$HOME/aria_ai_system/data"
+LOG_PATH="$LOG_DIR/night_training.log"
+mkdir -p "$LOG_DIR"
 
-# 크론 표현식: 매일 새벽 3시 0분에 실행 (0 3 * * *)
-# 실행 결과(print 출력문 등)는 night_training.log 파일에 누적 저장됩니다.
-CRON_JOB="0 3 * * * $PYTHON_EXEC $SCRIPT_PATH >> $LOG_PATH 2>&1"
+# 매일 새벽 3시 0분 실행
+CRON_JOB="0 3 * * * cd $SCRIPT_DIR && $PYTHON_EXEC $SCRIPT_PATH >> $LOG_PATH 2>&1"
 
-# 기존 크론탭 목록을 가져오되, 현재 스크립트가 이미 등록되어 있다면 제외(중복 방지)하고 새롭게 추가합니다.
-(crontab -l 2>/dev/null | grep -v -F "$SCRIPT_PATH"; echo "$CRON_JOB") | crontab -
+# 기존 night_training.py 항목(어느 경로든) 제거 후 새로 추가
+(crontab -l 2>/dev/null | grep -v "night_training.py"; echo "$CRON_JOB") | crontab -
 
 echo "===================================================="
-echo "✅ 심야 자동 학습 스케줄러(Crontab) 등록이 완료되었습니다!"
-echo "⏰ 매일 새벽 3시에 백그라운드에서 AI 모델이 자동으로 재학습됩니다."
-echo "📝 실행 로그 확인 명령어: tail -f $LOG_PATH"
+echo "✅ 심야 자동 학습 등록 완료 (매일 03:00)"
+echo "   실행 파일: $SCRIPT_PATH"
+echo "   로그:      tail -f $LOG_PATH"
 echo "===================================================="
+echo "🧠 지금 바로 한 번 학습합니다..."
+cd "$SCRIPT_DIR" && "$PYTHON_EXEC" "$SCRIPT_PATH"

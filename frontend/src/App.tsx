@@ -8,7 +8,6 @@ import MapPage from './pages/MapPage';
 import SettingsPage from './pages/SettingsPage';
 
 import Navigation from './components/Navigation';
-import { sendRobotCommand } from './api/ARIARobotController';
 import useAuthStore from './store/useAuthStore';
 import useRobotStore from './store/useRobotStore';
 
@@ -18,12 +17,6 @@ const EVENT_STREAM_URL =
   'http://localhost:3000';
 
 const BYPASS_SETUP_GUARD_FOR_TEST = false;
-
-const formatTimeHHmm = (date: Date) =>
-  `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-
-const formatScheduleKeyDate = (date: Date) =>
-  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
 const getSafeRobotId = (robotId?: string | null) => {
   const value = String(robotId || '').trim();
@@ -82,7 +75,7 @@ const AppShell = () => {
   const authRobotId = useAuthStore((state) => state.robotId);
   const qrToken = useAuthStore((state) => state.qrToken);
   const robotId = getSafeRobotId(authRobotId);
-  const { addLog, setIsRunning, setRobotPosition, setupStep, setSetupStep, sleepSchedule } = useRobotStore();
+  const { addLog, setIsRunning, setRobotPosition, setupStep, setSetupStep } = useRobotStore();
   const shouldShowNavigation =
     isLoggedIn && setupStep !== 'MAP_REQUIRED' && !location.pathname.startsWith('/auth');
 
@@ -205,51 +198,10 @@ const AppShell = () => {
     };
   }, [addLog, isLoggedIn, qrToken, robotId, setIsRunning, setRobotPosition, setSetupStep, setupStep]);
 
-  useEffect(() => {
-    if (!isLoggedIn || !sleepSchedule?.enabled) return;
+  // 수면/기상 전환은 로봇 컨트롤러가 직접 판단한다(저장 시 MQTT로 스케줄 전달).
+  // 이전에는 브라우저 타이머가 'LOW' 모드를 보냈는데, 서버가 LOW를 거부(400)했고
+  // 앱이 열려 있을 때만 동작했다.
 
-    let lastSentKey = '';
-
-    const syncScheduledMode = async () => {
-      const now = new Date();
-      const currentTime = formatTimeHHmm(now);
-      const mode =
-        currentTime === sleepSchedule.sleep_time
-          ? 'LOW'
-          : currentTime === sleepSchedule.wake_time
-            ? 'WAIT'
-            : null;
-
-      if (!mode) return;
-
-      const sendKey = `${formatScheduleKeyDate(now)}-${currentTime}-${mode}`;
-      if (lastSentKey === sendKey) return;
-      lastSentKey = sendKey;
-
-      try {
-        await sendRobotCommand(robotId, 'MODE', mode);
-        addLog(
-          mode === 'LOW'
-            ? '취침 시간이 되어 저전력 모드로 전환했습니다.'
-            : '기상 시간이 되어 대기 모드로 전환했습니다.'
-        );
-
-        if (mode === 'LOW') {
-          setIsRunning(false);
-        }
-      } catch (error) {
-        lastSentKey = '';
-        console.error('예약 모드 전환 실패:', error);
-      }
-    };
-
-    syncScheduledMode();
-    const timerId = window.setInterval(syncScheduledMode, 30000);
-
-    return () => {
-      window.clearInterval(timerId);
-    };
-  }, [addLog, isLoggedIn, robotId, setIsRunning, sleepSchedule]);
 
   return (
     <div className="min-h-screen bg-gray-200 flex justify-center items-center">
