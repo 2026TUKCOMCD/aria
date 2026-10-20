@@ -12,7 +12,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from nav2_msgs.action import NavigateToPose
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 
 class AiCleanerNode(Node):
     def __init__(self):
@@ -40,8 +40,14 @@ class AiCleanerNode(Node):
         self.load_ai_model()
 
         self._action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
+        self._current_goal_handle = None
         self.fan_pub = self.create_publisher(String, '/esp32/fan_cmd', 10)
         self.air_sub = self.create_subscription(String, '/esp32/air_raw', self.air_callback, 10)
+
+        # aria_controller_node가 AI모드/순회 여부를 알려주는 신호 — 꺼져 있으면
+        # (대기/매핑/기본모드이거나 순회 중) 예측 이동을 하지 않는다.
+        self._ai_active = False
+        self.ai_active_sub = self.create_subscription(Bool, '/aria/ai_active', self.ai_active_callback, 10)
 
         self.is_moving = False
         self.is_purifying = False
@@ -86,6 +92,19 @@ class AiCleanerNode(Node):
             except Exception:
                 pass
 
+    def ai_active_callback(self, msg: Bool):
+        self._ai_active = bool(msg.data)
+        if not self._ai_active:
+            self.get_logger().info("⏸️ aria_controller_node 요청으로 예측 청정을 대기 상태로 전환합니다.")
+            self._cancel_current_goal()
+            self.send_fan_cmd(0)
+            self.is_purifying = False
+
+    def _cancel_current_goal(self):
+        if self._current_goal_handle is not None:
+            self._current_goal_handle.cancel_goal_async()
+            self._current_goal_handle = None
+
     def send_fan_cmd(self, fan_speed: int):
         msg = String()
         msg.data = json.dumps({"fan": fan_speed})
@@ -100,7 +119,7 @@ class AiCleanerNode(Node):
         self.send_navigation_goal('home', custom_coords=self.home_coords)
 
     def air_callback(self, msg: String):
-        if not self.is_purifying:
+        if not self._ai_active or not self.is_purifying:
             return
 
         try:
@@ -121,6 +140,8 @@ class AiCleanerNode(Node):
             pass
 
     def predict_and_move(self):
+        if not self._ai_active:
+            return
         if self.is_moving or self.model is None or not self.zone_dict:
             return
 
@@ -187,12 +208,15 @@ class AiCleanerNode(Node):
         goal_handle = future.result()
         if not goal_handle.accepted:
             self.is_moving = False
+            self._current_goal_handle = None
             return
+        self._current_goal_handle = goal_handle
         get_result_future = goal_handle.get_result_async()
         get_result_future.add_done_callback(self.get_result_callback)
 
     def get_result_callback(self, future):
         self.is_moving = False
+        self._current_goal_handle = None
         
         if self.current_target_zone == 'home':
             self.get_logger().info('🔌 충전 대기소 도착! 다음 예측을 대기합니다.')
