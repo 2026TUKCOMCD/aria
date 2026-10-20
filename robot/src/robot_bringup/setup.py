@@ -29,10 +29,8 @@ setup(
     entry_points={
         'console_scripts': [
             'zone_segmentation_node = robot_bringup.zone_segmentation_node:main',
-            'air_purify_scheduler_node = robot_bringup.air_purify_scheduler_node:main',
             'aria_mqtt_node = robot_bringup.aria_mqtt_node:main',
             'aria_controller_node = robot_bringup.aria_controller_node:main',
-            'aria_cooking_ai_node = robot_bringup.aria_cooking_ai_node:main',
         ],
     },
 )
