@@ -9,6 +9,10 @@ from geometry_msgs.msg import TransformStamped, Twist, Quaternion
 from std_msgs.msg import String
 from tf2_ros import TransformBroadcaster
 
+# 펌웨어(main.cpp readTof0xDistance)와 맞춘 ToF 특수값
+TOF_OUT_OF_RANGE = -2.0   # 범위 밖(비어 있음)
+TOF_UNKNOWN = -1.0        # 미완료/타임아웃/고장
+
 
 def yaw_to_quaternion(yaw: float) -> Quaternion:
     q = Quaternion()
@@ -188,16 +192,23 @@ class Esp32WheelOdomNode(Node):
         현재
           - 각 센서의 시야각(±12.5°)을 tof_ray_step_deg 간격 빔으로 채운다.
           - 센서 사이 빈 구간은 NaN → Nav2가 무시(표시도 지우지도 않음).
-          - 측정값 없음(-1: 범위 밖 등)은 inf → 'range_max까지 비어 있음'으로 처리해
-            사람이 지나간 뒤 남은 장애물 표시를 지운다(Nav2 inf_is_valid).
+          - 펌웨어 값의 의미를 구분한다(2026-10 수정).
+              > 0   : 측정 거리(mm)
+              -2    : 범위 밖(앞이 비어 있음) → inf → 장애물 표시를 지운다(inf_is_valid)
+              -1 등 : 측정 미완료·타임아웃·센서 고장 → NaN → 표시도 지우지도 않는다
+            이전엔 -1을 모두 inf로 바꿔서, 센서가 고장 나거나 값이 늦게 오면
+            '앞이 비어 있다'고 판단해 실제 장애물 표시까지 지워버렸다.
+            (펌웨어를 새로 굽기 전에는 -2가 오지 않으므로 '지우기'는 라이다가 담당한다.)
         """
         readings = []
         for key in ('tof1', 'tof2', 'tof3'):
             raw = float(packet.get(key, -1.0))
             if raw > 0:
                 readings.append(raw / 1000.0)   # mm → m
+            elif raw == TOF_OUT_OF_RANGE:
+                readings.append(float('inf'))   # 확실히 비어 있음
             else:
-                readings.append(float('inf'))
+                readings.append(float('nan'))   # 모름 — 판단 보류
 
         lo = min(self.tof_angles) - self.tof_half_fov
         hi = max(self.tof_angles) + self.tof_half_fov

@@ -308,17 +308,27 @@ void i2cScan() {
 }
 
 // VL53L0X 거리 읽기
+// 반환값 의미 (라즈베리파이 esp32_wheel_odom_node.publish_tof_scan과 약속):
+//   > 0  : 거리(mm)
+//   -2.0 : 범위 밖 — 앞에 물체 없음 (RPi가 장애물 표시를 지움)
+//   -1.0 : 측정 미완료 / 타임아웃 / 센서 이상 — 모름 (RPi가 판단 보류)
+// 이전엔 둘 다 -1이어서, 센서 고장도 '앞이 비어 있음'으로 처리됐다.
+#define TOF_UNKNOWN       (-1.0f)
+#define TOF_OUT_OF_RANGE  (-2.0f)
+
 float readTof0xDistance(Adafruit_VL53L0X &tof) {
     if (!tof.isRangeComplete()) {
-        return -1.0f;
+        return TOF_UNKNOWN;
     }
 
     uint16_t d = tof.readRangeResult();
-    // ⚠️ 핵심: 호환 센서 특유의 에러 코드(8190, 8191) 및 타임아웃(65535) 제거
-    if (d == 0xFFFF || d >= 8190) {
-        return -1.0f;
+    if (d == 0xFFFF) {            // I2C 타임아웃
+        return TOF_UNKNOWN;
     }
-    return (d == 0xFFFF) ? -1.0f : (float)d;
+    if (d >= 8190) {              // 8190/8191: 반사 신호 없음(범위 밖)
+        return TOF_OUT_OF_RANGE;
+    }
+    return (float)d;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -509,11 +519,16 @@ void updateFanControl() {
 
     // 20ms 주기로 팬 속도를 부드럽게 가감속 (램핑)
     if (now - lastFanUpdate >= 20) {
+        // int로 계산한 뒤 목표값으로 자른다.
+        // (이전: (uint8_t)(253 + 5) = 2 로 넘쳐서, 목표가 5의 배수가 아니면
+        //  팬이 목표에 도달하지 못하고 0↔255 사이를 계속 맴돌았다)
         if (fanSpeed < targetFanSpeed) {
-            fanSpeed = min((uint8_t)(fanSpeed + 5), targetFanSpeed);
+            int next = (int)fanSpeed + 5;
+            fanSpeed = (uint8_t)(next > (int)targetFanSpeed ? targetFanSpeed : next);
         }
         else if (fanSpeed > targetFanSpeed) {
-            fanSpeed = max((uint8_t)(fanSpeed - 5), targetFanSpeed);
+            int next = (int)fanSpeed - 5;
+            fanSpeed = (uint8_t)(next < (int)targetFanSpeed ? targetFanSpeed : next);
         }
 
         ledcWrite(FAN_PWM_CH, fanSpeed);

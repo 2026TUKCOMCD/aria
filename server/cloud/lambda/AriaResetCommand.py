@@ -82,10 +82,15 @@ def lambda_handler(event, context):
         # ==========================================
         if target in ["ALL", "AI"]:
             # 스크린샷 기준의 폴더 구조로 타겟팅 (weight/base/는 삭제하지 않음)
+            # 로봇의 s3_sync_manager.py가 실제로 올리는 경로는
+            # robot_id={id}/data/aria_daily_log.csv 다. 이전 버전은 learning_data/만
+            # 지워서 실제 학습 데이터가 남았고, 다음 심야 학습 때 그대로 되살아났다.
+            prefix_data = f"robot_id={robot_id}/data/"
             prefix_learning = f"robot_id={robot_id}/learning_data/"
             prefix_weight_current = f"robot_id={robot_id}/weight/current/"
             prefix_weight_history = f"robot_id={robot_id}/weight/history/"
-            
+
+            delete_s3_folder(LEARNING_BUCKET, prefix_data)
             delete_s3_folder(LEARNING_BUCKET, prefix_learning)
             delete_s3_folder(LEARNING_BUCKET, prefix_weight_current)
             delete_s3_folder(LEARNING_BUCKET, prefix_weight_history)
@@ -101,6 +106,7 @@ def lambda_handler(event, context):
         payload = {
             "target": "RESET",
             "action": "TURN_ON",
+            "scope": target,   # ALL / MAP / AI — 로봇이 지울 로컬 데이터 범위
             "timestamp": int(time.time())
         }
         

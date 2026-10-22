@@ -57,9 +57,12 @@ def lambda_handler(event, context):
         pm25 = event.get('pm25', 0.0)
         voc = event.get('voc', 0) # DB 스키마에 맞춰 INT/FLOAT 확인 (init.sql에선 INT였음)
         
-        # 공기질 점수
-        air_score = int(event.get('air_score', 0))
-        air_grade = event.get('air_grade', '좋음')
+        # 공기질 점수 — 로봇은 최상위 air_score/air_grade로 보낸다.
+        # (IoT Rule이 air_quality.score 형태로 넘기는 구버전 SQL도 함께 지원)
+        air_quality = event.get('air_quality') if isinstance(event.get('air_quality'), dict) else {}
+        raw_score = event.get('air_score', air_quality.get('score'))
+        air_score = int(raw_score) if raw_score is not None else None
+        air_grade = event.get('air_grade', air_quality.get('grade'))
 
         # 좌표 데이터
         pose_x = float(event.get('pose_x', 0.0))
@@ -99,6 +102,7 @@ def lambda_handler(event, context):
             server_timestamp, robot_id,
             battery, is_charging, power_status, operation_mode,
             temperature, humidity, pm25, voc,
+            pose_x, pose_y, pose_theta,
             air_score, air_grade
         ))
         

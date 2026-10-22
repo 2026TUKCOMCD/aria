@@ -139,6 +139,16 @@ class ChargingPoseInitializer(Node):
             self.save_dock_pose_callback,
         )
 
+        # AMCL 재초기화 서비스
+        # aria_controller_node가 Tier2(AMCL) 스택을 새로 띄운 직후(매핑 종료 후
+        # 새 맵으로 전환 등) 호출한다. 노드 시작 때 1회만 하던 자동 초기화를
+        # 다시 수행해, 새로 뜬 AMCL에 충전 위치를 /initialpose로 넣어준다.
+        self.reinitialize_service = self.create_service(
+            Trigger,
+            '/reinitialize_amcl',
+            self.reinitialize_amcl_callback,
+        )
+
         self.charging_pose = None
         self.initialpose_publish_count_current = 0
         self.initialization_completed = False
@@ -457,6 +467,47 @@ class ChargingPoseInitializer(Node):
             self.get_logger().error(
                 response.message
             )
+
+        return response
+
+    def reinitialize_amcl_callback(
+        self,
+        request,
+        response,
+    ):
+        """
+        ros2 service call /reinitialize_amcl std_srvs/srv/Trigger "{}"
+
+        - 매핑 중 도킹 위치가 새 맵 기준으로 다시 저장됐을 수 있으므로
+          캐시한 충전 위치를 버리고 API에서 새로 조회한다.
+        - 새로 뜬 AMCL이 /initialpose를 구독할 때까지 기다려야 하므로
+          여기서는 재초기화를 '예약'만 하고 즉시 응답한다
+          (실제 발행은 try_auto_initialize 타이머가 수행).
+        """
+
+        del request
+
+        self.charging_pose = None
+        self.initialpose_publish_count_current = 0
+        self.initialization_completed = False
+
+        if self.initialize_timer is not None:
+            self.initialize_timer.cancel()
+
+        self.initialize_timer = self.create_timer(
+            self.retry_interval,
+            self.try_auto_initialize,
+        )
+
+        response.success = True
+        response.message = (
+            'AMCL 재초기화 예약 완료 '
+            '(충전 위치를 다시 조회해 /initialpose 발행)'
+        )
+
+        self.get_logger().info(
+            response.message
+        )
 
         return response
 

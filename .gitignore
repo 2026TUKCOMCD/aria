@@ -7,7 +7,17 @@ aria_synthetic_data.json
 certs/
 *.pem.crt
 *.pem.key
+# AWS 키·자격증명 JSON이 실수로 올라가지 않도록 *.json은 기본적으로 무시하되,
+# 빌드에 반드시 필요한 설정 파일은 예외로 추적한다.
+# (예전엔 이 규칙 때문에 frontend/package.json 등이 빠져 클론 후 빌드가 불가능했음)
 *.json
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/tsconfig*.json
+!server/cloud/aria_websocket_server/package.json
+!server/cloud/aria_websocket_server/package-lock.json
+!shared/schemas/*.json
+!firmware/esp32/.vscode/*.json
 AmazonRootCA1.pem
 robot/src/external/rf2o_laser_odometry/
 
