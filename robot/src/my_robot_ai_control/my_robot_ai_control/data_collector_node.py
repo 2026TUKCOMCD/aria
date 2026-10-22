@@ -249,6 +249,10 @@ class DataCollectorNode(Node):
             measured_score = self._current_air_score
             self.measured_scores.append({'zone': self.current_target_zone, 'score': measured_score})
             self._write_csv_row(zone_name)
+            # 순회로 측정한 모든 구역의 등급을 웹에 올린다.
+            # (이전엔 집중정화한 '나쁨' 구역만 올려서 좋음/보통 구역은 웹에서 갱신되지 않았다.
+            #  나쁨 구역은 정화가 끝난 뒤 정화 후 점수로 한 번 더 갱신된다.)
+            self.upload_air_quality_to_cloud(self.current_target_zone)
             self.visit_next_zone()
 
         elif self.state == 'PURIFYING':
@@ -301,8 +305,13 @@ class DataCollectorNode(Node):
     def _write_csv_row(self, zone_name):
         now = datetime.now()
         try:
+            # 웹앱 'AI 초기화'로 CSV가 치워졌을 수 있으므로, 파일이 없으면 헤더부터 다시 쓴다.
+            # (헤더 없이 이어 쓰면 night_training의 read_csv가 컬럼을 못 찾는다)
+            write_header = not os.path.exists(self.csv_path)
             with open(self.csv_path, mode='a', newline='') as f:
                 writer = csv.writer(f)
+                if write_header:
+                    writer.writerow(['hour', 'minute', 'day_of_week', 'zone_name', 'pm25'])
                 writer.writerow([now.hour, now.minute, now.weekday(), zone_name, self.current_pm25])
             self.get_logger().info(f"📝 데이터 기록 완료! [{zone_name}] PM2.5: {self.current_pm25:.1f}")
         except Exception as e:

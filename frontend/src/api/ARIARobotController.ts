@@ -248,8 +248,24 @@ const normalizeZonePolygon = (polygon?: ZonePointResponse[] | string): ZonePoint
   return polygon.map(normalizeZonePoint);
 };
 
+// 로봇(aria_mqtt_node, data_collector_node)과 DB는 한글 등급(좋음/보통/나쁨/지연)을 쓰고,
+// 화면은 영문 키(GOOD/NORMAL/BAD/STALE)를 쓴다. 두 표기를 모두 받아 영문 키로 통일한다.
+const KOREAN_GRADE_TO_KEY: Record<string, string> = {
+  좋음: 'GOOD',
+  보통: 'NORMAL',
+  나쁨: 'BAD',
+  위험: 'CRITICAL',
+  매우나쁨: 'CRITICAL',
+  지연: 'STALE',
+};
+
+const toGradeKey = (grade: unknown): string => {
+  const raw = String(grade || '').trim();
+  return KOREAN_GRADE_TO_KEY[raw.replace(/\s/g, '')] || raw.toUpperCase();
+};
+
 const normalizeZoneAirGrade = (grade: unknown): RobotZone['air_grade'] | undefined => {
-  const normalized = String(grade || '').trim().toUpperCase();
+  const normalized = toGradeKey(grade);
   if (
     normalized === 'GOOD' ||
     normalized === 'NORMAL' ||
@@ -280,7 +296,7 @@ const normalizeZones = (zones?: RobotZoneResponse[]): RobotZone[] => {
 };
 
 const normalizeAirQualityGrade = (grade: unknown): RobotAirQualityGrade => {
-  const normalized = String(grade || '').trim().toUpperCase();
+  const normalized = toGradeKey(grade);
   if (normalized === 'GOOD' || normalized === 'NORMAL' || normalized === 'BAD' || normalized === 'CRITICAL') {
     return normalized;
   }

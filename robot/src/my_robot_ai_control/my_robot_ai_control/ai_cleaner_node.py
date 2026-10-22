@@ -66,12 +66,19 @@ class AiCleanerNode(Node):
         self.declare_parameter('good_pm25', 15.0)             # 이 미만이면 정화 완료
         self.declare_parameter('cooldown_sec', 1800.0)        # 같은 구역 재출동 금지 시간(30분)
         self.declare_parameter('max_purify_sec', 900.0)       # 한 구역 최대 정화 시간(15분)
+        # 복귀 위치: 웹에서 저장한 충전(도킹) 위치를 API로 받아 쓴다.
+        # home_x/home_y는 도킹 위치를 아직 못 받았을 때만 쓰는 예비값이다.
         self.declare_parameter('home_x', 0.14)
         self.declare_parameter('home_y', 0.00)
+        self.declare_parameter(
+            'base_api_url',
+            os.environ.get('ARIA_BASE_API_URL', os.environ.get('ARIA_API_URL', 'https://ph7ckbtbl3.execute-api.ap-northeast-2.amazonaws.com')),
+        )
 
         p = lambda n: self.get_parameter(n).value
         self._robot_id = str(p('robot_id'))
         self._server_url = str(p('server_url')).rstrip('/')
+        self._base_api_url = str(p('base_api_url')).rstrip('/')
         self._auth_token = p('auth_token')
         self.threshold = float(p('predict_threshold'))
         self.good_threshold = float(p('good_pm25'))
@@ -155,13 +162,42 @@ class AiCleanerNode(Node):
         except Exception as e:
             self.get_logger().warn(f'구역 조회 오류: {e} — 기존 좌표 유지')
         finally:
+            # 도킹 위치도 구역과 같은 시점(시작·매핑 종료·순회 종료)에 바뀔 수 있다.
+            self._fetch_home_coordinates()
             self._zone_fetch_running = False
+
+    def _fetch_home_coordinates(self):
+        """저장된 충전(도킹) 위치를 복귀 좌표로 쓴다. 실패하면 기존 값을 유지한다."""
+        try:
+            url = f'{self._base_api_url}/robots/{self._robot_id}/dock'
+            headers = {'Accept': 'application/json'}
+            if self._auth_token:
+                headers['Authorization'] = self._auth_token
+            response = requests.get(url, headers=headers, timeout=8)
+            if response.status_code != 200:
+                return
+            result = response.json()
+            data = result.get('data') if isinstance(result, dict) else None
+            if result.get('success') is not True or not isinstance(data, dict):
+                return
+            home = {'x': float(data['x']), 'y': float(data['y'])}
+            if home != self.home_coords:
+                self.home_coords = home
+                self.get_logger().info(f"🏠 복귀 위치(도킹) 갱신: x={home['x']:.2f}, y={home['y']:.2f}")
+        except Exception as e:
+            self.get_logger().warn(f'도킹 위치 조회 실패: {e} — 기존 복귀 좌표 유지')
 
     def _maybe_reload_model(self):
         try:
             mtime = os.path.getmtime(self.model_path)
         except OSError:
-            return  # 아직 학습된 모델 없음
+            # 모델 파일이 없다 — 아직 학습 전이거나, 웹앱 'AI 초기화'로 치워진 경우.
+            # 메모리에 남은 옛 모델로 계속 예측하지 않도록 내려놓는다.
+            if self.bundle is not None:
+                self.get_logger().warn('모델 파일이 사라져 예측을 멈춥니다(AI 초기화). 새 학습을 기다립니다.')
+            self.bundle = None
+            self._model_mtime = None
+            return
         if mtime == self._model_mtime:
             return
         self._model_mtime = mtime

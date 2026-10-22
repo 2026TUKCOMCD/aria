@@ -150,6 +150,8 @@ class AriaControllerNode(Node):
         self.motor_cmd_pub = self.create_publisher(String, '/esp32/motor_cmd', 10)
         self.fan_cmd_pub = self.create_publisher(String, '/esp32/fan_cmd', 10)
         self.sleep_state_pub = self.create_publisher(Bool, '/aria/sleep_state', 10)
+        # 매핑 완료/중단 등 사용자에게 알릴 이벤트 → aria_mqtt_node가 웹 알림으로 중계
+        self.robot_event_pub = self.create_publisher(String, '/aria/robot_event', 10)
 
         # AI모드 4시간 재실행 감시 (1초 주기)
         self.create_timer(1.0, self._ai_mode_tick)
@@ -377,6 +379,7 @@ class AriaControllerNode(Node):
             finished = self._explore_finished_event.wait(timeout=self.mapping_timeout_sec)
             if not finished:
                 self.get_logger().error('매핑이 제한 시간 내에 끝나지 않았습니다.')
+                self._publish_robot_event('MAPPING_FAILED', '맵 생성이 제한 시간 안에 끝나지 않았습니다.')
                 return
 
             if dock_pose is not None:
@@ -393,12 +396,16 @@ class AriaControllerNode(Node):
             map_path = self._save_map()
             if map_path:
                 self._upload_map_with_zones(map_path)
+                self._publish_robot_event('MAPPING_COMPLETED', '맵 생성이 완료되었습니다. 맵을 새로고침해 주세요.')
+            else:
+                self._publish_robot_event('MAPPING_FAILED', '맵 저장에 실패했습니다.')
 
             self._swap_tier2('LOCALIZE', map_yaml=f'{map_path}.yaml' if map_path else None)
             self._call_trigger_service_sync(self.reinit_client)
 
         except Exception as e:
             self.get_logger().error(f'매핑 시퀀스 오류: {e}')
+            self._publish_robot_event('MAPPING_FAILED', f'맵 생성 중 오류가 발생했습니다: {e}')
         finally:
             if self.mode == 'MAPPING':
                 self._enter_standby()
@@ -435,7 +442,11 @@ class AriaControllerNode(Node):
     # ══════════════════════════════════════════════════
 
     def _enter_basic_mode(self, payload: dict):
-        self._cancel_own_nav_goal()
+        # 웹앱은 'MODE=MANUAL'(Shadow)과 '구역 이동'(cmd/nav)을 동시에 보낸다.
+        # 이동 명령이 먼저 도착한 경우 여기서 취소하면 로봇이 출발하지 않으므로,
+        # 기본모드 명령 자체에 목표가 담겨 있을 때만 기존 이동을 취소한다.
+        if any(k in payload for k in ('x', 'y', 'zone_id')):
+            self._cancel_own_nav_goal()
         self.purify_abort_pub.publish(Empty())
         self._set_ai_active(False)
         self.mode = 'BASIC'
@@ -576,6 +587,7 @@ class AriaControllerNode(Node):
 
         arrived = threading.Event()
         success = [False]
+        timed_out = [False]
 
         goal = NavigateToPose.Goal()
         goal.pose.header.frame_id = 'map'
@@ -596,6 +608,10 @@ class AriaControllerNode(Node):
         def response_cb(future):
             goal_handle = future.result()
             accepted = goal_handle is not None and goal_handle.accepted
+            if accepted and timed_out[0]:
+                # 이미 실패로 처리된 뒤 늦게 수락된 목표 — 바로 취소한다.
+                goal_handle.cancel_goal_async()
+                return
             with self._nav_goal_lock:
                 self._current_goal_handle = goal_handle if accepted else None
             if not accepted:
@@ -605,10 +621,21 @@ class AriaControllerNode(Node):
 
         self._publish_nav_event('NAVIGATION_REQUESTED', metadata)
         self.nav_client.send_goal_async(goal).add_done_callback(response_cb)
-        arrived.wait(timeout=timeout)
+        finished = arrived.wait(timeout=timeout)
 
         with self._nav_goal_lock:
+            goal_handle = self._current_goal_handle
             self._current_goal_handle = None
+
+        if not finished:
+            # 타임아웃: 실패로 보고만 하고 목표를 그대로 두면 로봇이 계속 이동한다.
+            timed_out[0] = True
+            self.get_logger().warn(f'이동 제한 시간({timeout:.0f}s) 초과 — Nav2 목표를 취소합니다.')
+            if goal_handle is not None:
+                goal_handle.cancel_goal_async()
+            extra = {'reason': '이동 제한 시간 초과'}
+            self._publish_nav_event('NAVIGATION_FAILED', metadata, **extra)
+            return False
 
         event = 'NAVIGATION_SUCCEEDED' if success[0] else 'NAVIGATION_FAILED'
         self._publish_nav_event(event, metadata)
@@ -695,12 +722,10 @@ class AriaControllerNode(Node):
         self._stop_tier2()
 
         if profile == 'LOCALIZE':
-            # ❌ 여기 패키지 이름이 my_robot_bringup으로 되어 있음
             cmd = ['ros2', 'launch', 'my_robot_bringup', 'localize.launch.py']
             if map_yaml:
                 cmd.append(f'map_yaml:={map_yaml}')
         else:  # 'MAP'
-            # ❌ 여기도 패키지 이름이 my_robot_bringup으로 되어 있음
             cmd = ['ros2', 'launch', 'my_robot_bringup', 'mapping.launch.py', 'return_to_init:=false']
         self.get_logger().info(f'[Tier2] {profile} 프로필 기동: {" ".join(cmd)}')
         
@@ -760,6 +785,12 @@ class AriaControllerNode(Node):
         msg.data = self.mode
         self.mode_state_pub.publish(msg)
         self.get_logger().info(f'모드 전환: {self.mode}')
+
+    def _publish_robot_event(self, event_type: str, message: str):
+        # aria_mqtt_node._on_robot_event → aria/{id}/event/noti → 웹 알림 + 이벤트 로그
+        msg = String()
+        msg.data = json.dumps({'type': event_type, 'message': message}, ensure_ascii=False)
+        self.robot_event_pub.publish(msg)
 
     def destroy_node(self):
         self._stop_tier2()

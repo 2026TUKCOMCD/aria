@@ -28,6 +28,24 @@ VOC_MAX = 150.0
 THRESHOLD_GOOD = 30.0
 THRESHOLD_BAD = 70.0
 
+# 컨트롤러 내부 모드 → 웹앱/Shadow 모드 어휘
+# (웹앱은 AUTO/MANUAL/WAIT로 명령하고, 매핑 중임은 slam=ON으로 표시한다.
+#  매핑 중 mode를 'MAPPING'으로 보고해야 웹의 WAIT(정지) 명령이 delta로 들어온다.)
+CTRL_TO_SHADOW_MODE = {
+    "STANDBY": "WAIT",
+    "AI": "AUTO",
+    "BASIC": "MANUAL",
+    "MAPPING": "MAPPING",
+}
+SHADOW_KEYS = ("mode", "slam", "power", "turbo")
+
+# AI 초기화(RESET) 시 정리할 로컬 학습 파일 (data_collector / night_training 경로와 동일)
+AI_SYSTEM_DIR = Path.home() / "aria_ai_system"
+AI_RESET_FILES = (
+    AI_SYSTEM_DIR / "data" / "aria_daily_log.csv",
+    AI_SYSTEM_DIR / "models" / "aria_rf_model.pkl",
+)
+
 
 class AriaMqttNode(Node):
     """AWS IoT Core 전용 통신 노드 (명세서 전체 통합 및 동기화 완성본)."""
@@ -95,12 +113,17 @@ class AriaMqttNode(Node):
             self.get_logger().info("AWS IoT Core 연결 완료 (Keep-Alive 60s, LWT 활성화)")
             
             # 부팅 시 클라우드 섀도우 상태 강제 초기화
+            # - reported: 실제 부팅 상태(대기·SLAM OFF)
+            # - desired: null로 비운다. 꺼지기 전에 남아 있던 desired(예: slam=ON)가
+            #   부팅 직후 delta로 재생되어 로봇이 저절로 매핑/AI 모드에 들어가는 것을 막는다.
             init_shadow = {
                 "state": {
+                    "desired": {k: None for k in SHADOW_KEYS},
                     "reported": {
                         "slam": "OFF",
-                        "mode": "STANDBY",
-                        "power": "OFF"
+                        "mode": "WAIT",
+                        "power": "OFF",
+                        "turbo": "OFF",
                     }
                 }
             }
@@ -200,9 +223,37 @@ class AriaMqttNode(Node):
     # 내부(Controller) -> 클라우드 상태 릴레이 콜백
     # ──────────────────────────────────────────────
     def _on_mode_state(self, msg: String):
-        """컨트롤러에서 모드가 변경되면 클라우드 상태값 동기화"""
-        self.current_status["mode"] = msg.data
-        self.get_logger().info(f"[내부 상태 동기화] 컨트롤러 모드 업데이트: {msg.data}")
+        """컨트롤러에서 모드가 변경되면 클라우드 상태값 + Shadow reported 동기화.
+
+        이전에는 delta를 받은 순간 desired 값을 그대로 reported에 써서,
+        로봇이 스스로 모드를 바꾼 경우(매핑 완료, 기본모드 정화 완료, 수동 중단 등)
+        Shadow가 옛 상태로 남았다. 그러면 웹이 같은 명령을 다시 보내도
+        desired == reported라 delta가 생기지 않아 명령이 무시됐다.
+        이제는 '실제 모드가 바뀔 때마다' 그 값을 reported로 보고한다.
+        """
+        ctrl_mode = msg.data
+        self.current_status["mode"] = ctrl_mode
+        self.current_status["slam"] = "ON" if ctrl_mode == "MAPPING" else "OFF"
+        self.get_logger().info(f"[내부 상태 동기화] 컨트롤러 모드 업데이트: {ctrl_mode}")
+
+        self._report_shadow({
+            "mode": CTRL_TO_SHADOW_MODE.get(ctrl_mode, "WAIT"),
+            "slam": self.current_status["slam"],
+        })
+
+    def _report_shadow(self, reported: dict, clear_desired=()):
+        """Shadow reported 갱신. clear_desired에 준 키는 desired를 null로 비운다."""
+        state = {"reported": reported}
+        if clear_desired:
+            state["desired"] = {k: None for k in clear_desired}
+        try:
+            self.mqtt_client.publish(
+                f"$aws/things/{THING_NAME}/shadow/update",
+                json.dumps({"state": state}),
+                1,
+            )
+        except Exception as e:
+            self.get_logger().warn(f"Shadow 보고 실패: {e}")
 
     def _on_nav_event(self, msg: String):
         """컨트롤러의 내비게이션 이벤트를 웹앱(클라우드)으로 팝업 알림 전송"""
@@ -245,6 +296,7 @@ class AriaMqttNode(Node):
     def publish_event_notification(self, event_type: str, message: str):
         topic = f"aria/{CLIENT_ID}/event/noti"
         payload = {
+            "robot_id": CLIENT_ID,   # 웹소켓 서버가 이벤트 로그 저장·SSE 방 구분에 사용
             "type": event_type,
             "message": message,
             "timestamp": str(int(time.time()))
@@ -310,26 +362,36 @@ class AriaMqttNode(Node):
                         stop.data = json.dumps({"left": 0, "right": 0, "mode": 0})
                         self.motor_pub.publish(stop)
                         self.current_status["power"] = "OFF"
+                        self._report_shadow({"power": "OFF"})
                         self.get_logger().info("명령 수행: 시스템 전원 정지")
                     elif action == "TURN_ON":
                         self.current_status["power"] = "ON"
+                        self._report_shadow({"power": "ON"})
                         self.get_logger().info("명령 수행: 시스템 전원 가동")
 
                 elif target == "AI_MODE":
+                    mode_msg = String()
                     if action == "TURN_ON":
-                        self.current_status["mode"] = "AI_MODE"
-                        mode_msg = String()
                         mode_msg.data = "AI_MODE"
-                        self.mode_pub.publish(mode_msg)
-                        self.get_logger().info("명령 수행: AI 모드 활성화")
+                        self.get_logger().info("명령 수행: AI 모드 활성화 요청")
                     elif action == "TURN_OFF":
-                        self.current_status["mode"] = "STANDBY"
-                        mode_msg = String()
                         mode_msg.data = "STANDBY"
+                        self.get_logger().info("명령 수행: AI 모드 비활성화 요청")
+                    if mode_msg.data:
                         self.mode_pub.publish(mode_msg)
-                        self.get_logger().info("명령 수행: AI 모드 비활성화")
 
-            # 2. 내비게이션 좌표 이동 명령 처리
+                elif target == "RESET":
+                    # AriaResetCommand Lambda가 scope(ALL/MAP/AI)를 함께 보낸다.
+                    self._handle_reset(str(payload.get("scope", "ALL")).upper())
+
+            # 2. 이동 취소 명령 (웹앱 '청정 중지' → type: CANCEL_NAVIGATION)
+            elif str(payload.get("type", "")).upper() in ("CANCEL", "CANCEL_NAVIGATION", "STOP"):
+                cancel_msg = String()
+                cancel_msg.data = json.dumps({"type": "CANCEL"})
+                self.manual_move_pub.publish(cancel_msg)
+                self.get_logger().info("[Nav 명령 수신] 이동 취소")
+
+            # 3. 내비게이션 좌표 이동 명령 처리
             elif payload.get("type") == "MOVE_TO" or ("x" in payload and "y" in payload):
                 target_x = float(payload["x"])
                 target_y = float(payload["y"])
@@ -345,6 +407,10 @@ class AriaMqttNode(Node):
                     "y": target_y,
                     "theta": target_theta
                 }
+                # 구역 이름 등을 넘겨야 도착/실패 알림에 "거실에 도착했습니다"처럼 표시된다.
+                for key in ("target_type", "zone_id", "zone_name", "target_name"):
+                    if key in payload:
+                        move_payload[key] = payload[key]
                 move_msg = String()
                 move_msg.data = json.dumps(move_payload, ensure_ascii=False)
                 self.manual_move_pub.publish(move_msg)
@@ -354,6 +420,52 @@ class AriaMqttNode(Node):
 
     def _on_sleep_state(self, msg: Bool):
         self.current_status["sleeping"] = bool(msg.data)
+
+    def _power_off(self):
+        """Shadow power=OFF: 모터 정지 + 대기 전환 (기존 동작 그대로)."""
+        stop_msg = String()
+        stop_msg.data = json.dumps({"left": 0, "right": 0, "mode": 0})
+        self.motor_pub.publish(stop_msg)
+
+        standby_msg = String()
+        standby_msg.data = json.dumps({"mode": "STANDBY"})
+        self.mode_pub.publish(standby_msg)
+
+        self.current_status["power"] = "OFF"
+        self.get_logger().info("명령 수행: 시스템 전원 OFF (정지 및 대기 전환)")
+
+    def _handle_reset(self, scope: str):
+        """웹앱 초기화(AriaResetCommand) 처리.
+
+        - 클라우드(DB 구역·맵, S3 학습데이터)는 Lambda가 지운다.
+        - 로봇 쪽 AI 학습 데이터(CSV)·모델은 여기서 정리한다. 실수로 지운 경우를
+          대비해 삭제 대신 '.bak_<시각>'으로 이름을 바꿔 보관한다.
+        - ai_cleaner_node는 모델 파일이 사라지면 예측을 멈추고(핫리로드),
+          data_collector_node는 다음 순회 때 헤더부터 새 CSV를 만든다.
+        """
+        self.get_logger().warn(f"[초기화 수신] scope={scope}")
+
+        standby_msg = String()
+        standby_msg.data = json.dumps({"mode": "STANDBY"})
+        self.mode_pub.publish(standby_msg)
+
+        if scope not in ("ALL", "AI"):
+            self.publish_event_notification("RESET_DONE", "맵 데이터가 초기화되었습니다.")
+            return
+
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        moved = []
+        for path in AI_RESET_FILES:
+            try:
+                if path.exists():
+                    backup = path.with_name(f"{path.name}.bak_{stamp}")
+                    path.rename(backup)
+                    moved.append(path.name)
+            except Exception as e:
+                self.get_logger().error(f"AI 데이터 초기화 실패({path}): {e}")
+
+        self.get_logger().info(f"AI 학습 데이터 초기화 완료(백업 보관): {moved}")
+        self.publish_event_notification("RESET_DONE", "AI 학습 데이터가 초기화되었습니다.")
 
     def _predict_callback(self, client, userdata, message):
         """[명세 반영] AI 판단 결과 수신 (res/predict)"""
@@ -381,10 +493,12 @@ class AriaMqttNode(Node):
             self.get_logger().info(f"[Shadow Delta 수신] {delta}")
 
             # 1. 모드 (mode) 변경 처리
+            #    current_status["mode"]/Shadow reported는 여기서 바꾸지 않는다 —
+            #    컨트롤러가 실제로 모드를 바꾸면 /aria/mode_state로 알려오고
+            #    _on_mode_state가 그 값을 보고한다(거부된 명령이 반영된 것처럼 보이지 않도록).
             if "mode" in delta:
-                new_mode = delta["mode"] 
-                self.current_status["mode"] = new_mode
-                
+                new_mode = delta["mode"]
+
                 if new_mode == "AUTO":
                     ctrl_mode = "AI"
                 elif new_mode == "MANUAL":
@@ -402,8 +516,7 @@ class AriaMqttNode(Node):
             # 2. SLAM (slam) 변경 처리
             if "slam" in delta:
                 new_slam = delta["slam"]
-                self.current_status["slam"] = new_slam
-                
+
                 if new_slam == "ON":
                     mapping_msg = String()
                     mapping_msg.data = json.dumps({"mode": "MAPPING"})
@@ -421,14 +534,7 @@ class AriaMqttNode(Node):
                 self.current_status["power"] = new_power
                 
                 if new_power == "OFF":
-                    stop_msg = String()
-                    stop_msg.data = json.dumps({"left": 0, "right": 0, "mode": 0})
-                    self.motor_pub.publish(stop_msg)
-                    
-                    standby_msg = String()
-                    standby_msg.data = json.dumps({"mode": "STANDBY"})
-                    self.mode_pub.publish(standby_msg)
-                    self.get_logger().info("[Shadow 동기화] 시스템 전원 OFF (정지 및 대기 전환)")
+                    self._power_off()
 
             # 4. 터보 (turbo) 변경 처리
             if "turbo" in delta:
@@ -436,18 +542,13 @@ class AriaMqttNode(Node):
                 self.current_status["turbo"] = new_turbo
                 self.get_logger().info(f"[Shadow 동기화] 터보 모드 변경: {new_turbo}")
 
-            # 델타(명령) 처리가 끝난 후 클라우드에 "반영 완료(reported)" 보고
-            reported_payload = {
-                "state": {
-                    "reported": delta 
-                }
-            }
-            self.mqtt_client.publish(
-                f"$aws/things/{THING_NAME}/shadow/update",
-                json.dumps(reported_payload),
-                1
-            )
-            self.get_logger().info(f"[Shadow Delta 해소] Reported 상태 클라우드 갱신 완료: {delta}")
+            # 처리한 desired는 비운다(같은 명령을 다시 보낼 수 있고, 재부팅 때 재생되지 않음).
+            # reported는 로봇이 '직접 적용한 값'(power/turbo)만 지금 보고하고,
+            # mode/slam은 컨트롤러가 실제로 전환한 뒤 _on_mode_state에서 보고한다.
+            handled = [k for k in SHADOW_KEYS if k in delta]
+            applied = {k: delta[k] for k in ("power", "turbo") if k in delta}
+            self._report_shadow(applied, clear_desired=handled)
+            self.get_logger().info(f"[Shadow Delta 처리] desired 비움: {handled}, reported: {applied}")
 
         except Exception as e:
             self.get_logger().error(f"Shadow 처리 오류: {e}")

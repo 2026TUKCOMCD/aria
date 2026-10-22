@@ -121,13 +121,28 @@ app.post('/api/alert', async (req, res) => {
         // 핵심 수정: 로봇 ID가 없으면 기본값 '1'로 강제 매핑하여 클라이언트 방과 일치시킴
         const targetRobotId = String(alertData.robot_id || '1');
 
+        const eventType = String(alertData.type || alertData.event_type || 'INFO');
+        const eventMessage = String(alertData.message || '이벤트가 발생했습니다.');
+
         broadcastSseEvent(targetRobotId, alertData.event || 'clean_status', {
-            type: alertData.type || alertData.event_type || 'INFO',
+            type: eventType,
             timestamp: alertData.timestamp || new Date().toISOString(),
-            message: alertData.message || '이벤트가 발생했습니다.',
+            message: eventMessage,
             ...alertData
         });
-    
+
+        // 이벤트 로그 저장 — 이전에는 robot_event_logs에 INSERT하는 곳이 없어
+        // 웹의 이벤트 목록(GET /api/events)이 항상 비어 있거나 더미 데이터였다.
+        // 저장 실패가 실시간 알림 전달을 막지 않도록 별도 try로 감싼다.
+        try {
+            await pool.query(
+                'INSERT INTO robot_event_logs (robot_id, event_type, message) VALUES ($1, $2, $3)',
+                [targetRobotId, eventType.slice(0, 20), eventMessage]
+            );
+        } catch (dbError) {
+            console.error('이벤트 로그 저장 실패:', dbError.message);
+        }
+
         res.status(200).json({
             success: true,
             message: '알림을 웹 클라이언트로 전송했습니다.'
@@ -143,7 +158,7 @@ app.post('/api/alert', async (req, res) => {
 
 
 app.get('/api/events', async (req, res) => {
-    const robotId = req.query.robot_id || 'aria_robot01';
+    const robotId = String(req.query.robot_id || '1');
     console.log(`[${robotId}] 이벤트 로그 조회 요청`);
 
     try {

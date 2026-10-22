@@ -149,57 +149,6 @@ const MapPage = () => {
     };
   }, [metadata]);
 
-  const zoneBounds = useMemo(() => {
-    const xs: number[] = [];
-    const ys: number[] = [];
-
-    displayZones.forEach((zone) => {
-      xs.push(zone.center.x);
-      ys.push(zone.center.y);
-
-      if (
-        zone.area &&
-        typeof zone.area.x_min === 'number' &&
-        typeof zone.area.x_max === 'number' &&
-        typeof zone.area.y_min === 'number' &&
-        typeof zone.area.y_max === 'number'
-      ) {
-        xs.push(zone.area.x_min, zone.area.x_max);
-        ys.push(zone.area.y_min, zone.area.y_max);
-      }
-
-      zone.polygon?.forEach((point) => {
-        xs.push(point.x);
-        ys.push(point.y);
-      });
-    });
-
-    if (xs.length === 0 || ys.length === 0) return null;
-
-    return {
-      minX: Math.min(...xs),
-      maxX: Math.max(...xs),
-      minY: Math.min(...ys),
-      maxY: Math.max(...ys),
-    };
-  }, [displayZones]);
-
-  const zoneToPercent = (point: { x: number; y: number }) => {
-    if (!zoneBounds) return null;
-
-    const width = zoneBounds.maxX - zoneBounds.minX;
-    const height = zoneBounds.maxY - zoneBounds.minY;
-
-    if (width <= 0 || height <= 0) return null;
-
-    const left = ((point.x - zoneBounds.minX) / width) * 100;
-    const top = (1 - (point.y - zoneBounds.minY) / height) * 100;
-
-    return {
-      left: Math.min(92, Math.max(8, left)),
-      top: Math.min(92, Math.max(8, top)),
-    };
-  };
 
   const worldToPercent = (point: { x: number; y: number }, shouldClamp = false) => {
     if (!metadata || !worldSize) return { left: 50, top: 50 };
