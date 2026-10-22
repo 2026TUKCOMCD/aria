@@ -87,6 +87,8 @@ class DataCollectorNode(Node):
 
         # 집중정화용 팬 제어
         self.fan_pub = self.create_publisher(String, '/esp32/fan_cmd', 10)
+        # 청정 시작/완료 알림 → aria_mqtt_node → 웹 로그
+        self.event_pub = self.create_publisher(String, '/aria/robot_event', 10)
         self._dwell_started = None      # 현재 구역에서 정화를 시작한 시각
         self._score_before = None       # 정화 시작 시점 점수(개선량 기록용)
         self.create_timer(1.0, self._purify_dwell_tick)
@@ -261,6 +263,7 @@ class DataCollectorNode(Node):
             self._score_before = self._current_air_score
             self._dwell_started = time.time()
             self._send_fan(self._purify_fan_speed)
+            self._notify_purify(True, zone_name)
             self.get_logger().info(
                 f"🌀 '{zone_name}' 집중 정화 시작 (시작 점수 {self._score_before:.1f}, "
                 f"최소 {self._purify_min_sec:.0f}s / 최대 {self._purify_max_sec:.0f}s)"
@@ -269,6 +272,15 @@ class DataCollectorNode(Node):
     # ──────────────────────────────────────────────
     # 집중정화 체류
     # ──────────────────────────────────────────────
+
+    def _notify_purify(self, started: bool, zone_name):
+        """웹 화면 로그: 청정 시작/완료만 짧게 알린다."""
+        msg = String()
+        msg.data = json.dumps({
+            'type': 'PURIFY_START' if started else 'PURIFY_DONE',
+            'message': f'{zone_name} 청정을 시작합니다.' if started else f'{zone_name} 청정을 완료했습니다.',
+        }, ensure_ascii=False)
+        self.event_pub.publish(msg)
 
     def _send_fan(self, speed: int):
         msg = String()
@@ -299,6 +311,7 @@ class DataCollectorNode(Node):
             f"{self._score_before:.1f} → {score:.1f}. 정화 후 결과를 업로드합니다."
         )
         self._end_dwell(fan_off=True)
+        self._notify_purify(False, zone_name)
         self.upload_air_quality_to_cloud(self.current_target_zone)
         self.visit_next_zone()
 

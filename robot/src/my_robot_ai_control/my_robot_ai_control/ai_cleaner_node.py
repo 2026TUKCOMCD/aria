@@ -101,6 +101,8 @@ class AiCleanerNode(Node):
         self._action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self._current_goal_handle = None
         self.fan_pub = self.create_publisher(String, '/esp32/fan_cmd', 10)
+        # 청정 시작/완료 알림 → aria_mqtt_node → 웹 로그
+        self.event_pub = self.create_publisher(String, '/aria/robot_event', 10)
         self.create_subscription(String, '/esp32/air_raw', self.air_callback, 10)
 
         self._ai_active = False
@@ -235,6 +237,15 @@ class AiCleanerNode(Node):
             self._current_goal_handle.cancel_goal_async()
             self._current_goal_handle = None
 
+    def _notify_purify(self, started: bool, zone_name):
+        """웹 화면 로그: 청정 시작/완료만 짧게 알린다."""
+        msg = String()
+        msg.data = json.dumps({
+            'type': 'PURIFY_START' if started else 'PURIFY_DONE',
+            'message': f'{zone_name} 청정을 시작합니다.' if started else f'{zone_name} 청정을 완료했습니다.',
+        }, ensure_ascii=False)
+        self.event_pub.publish(msg)
+
     def send_fan_cmd(self, fan_speed: int):
         msg = String()
         msg.data = json.dumps({"fan": fan_speed})
@@ -246,6 +257,8 @@ class AiCleanerNode(Node):
             self.cooldown_dict[self.current_target_zone] = time.time()
         if self.is_purifying:
             self.send_fan_cmd(0)
+            if start_cooldown:  # 정상 종료(회복·최대시간·구역 전환)만 알린다. AI 끄기/취침으로 멈춘 경우는 제외
+                self._notify_purify(False, self.current_target_zone)
         self.is_purifying = False
         self.purify_started_at = None
 
@@ -414,6 +427,7 @@ class AiCleanerNode(Node):
             self.is_purifying = True
             self.purify_started_at = time.time()
             self.send_fan_cmd(255)
+            self._notify_purify(True, self.current_target_zone)
 
 
 def main(args=None):
