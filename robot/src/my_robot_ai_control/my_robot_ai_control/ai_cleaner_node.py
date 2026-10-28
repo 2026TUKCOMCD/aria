@@ -66,6 +66,14 @@ class AiCleanerNode(Node):
         self.declare_parameter('good_pm25', 15.0)             # 이 미만이면 정화 완료
         self.declare_parameter('cooldown_sec', 1800.0)        # 같은 구역 재출동 금지 시간(30분)
         self.declare_parameter('max_purify_sec', 900.0)       # 한 구역 최대 정화 시간(15분)
+        # 예측에 없던 오염 감지 → 즉시 탐색 순회 요청
+        # 대기 중(이동·정화 아님) 현재 위치 종합 점수가 detect_score 이상으로
+        # detect_count번(AirPacket 2초 주기 → 약 6초) 연속이면 감지로 본다.
+        self.declare_parameter('detect_score', 70.0)          # '나쁨' 등급 기준과 동일
+        self.declare_parameter('detect_count', 3)
+        self.declare_parameter('detect_cooldown_sec', 600.0)  # 감지 후 재요청 금지(복귀 직후 반복 방지)
+        self.declare_parameter('pm25_max', 100.0)             # 종합 점수 공식(data_collector와 동일)
+        self.declare_parameter('voc_max', 150.0)
         # 복귀 위치: 웹에서 저장한 충전(도킹) 위치를 API로 받아 쓴다.
         # home_x/home_y는 도킹 위치를 아직 못 받았을 때만 쓰는 예비값이다.
         self.declare_parameter('home_x', 0.14)
@@ -85,6 +93,13 @@ class AiCleanerNode(Node):
         self.cooldown_duration = float(p('cooldown_sec'))
         self.max_purify_sec = float(p('max_purify_sec'))
         self.home_coords = {'x': float(p('home_x')), 'y': float(p('home_y'))}
+        self.detect_score = float(p('detect_score'))
+        self.detect_count = int(p('detect_count'))
+        self.detect_cooldown = float(p('detect_cooldown_sec'))
+        self._pm25_max = float(p('pm25_max'))
+        self._voc_max = float(p('voc_max'))
+        self._bad_streak = 0
+        self._last_detect_at = 0.0
 
         # 구역 좌표 (백그라운드 스레드가 갱신)
         self.zone_dict = {}
@@ -103,6 +118,10 @@ class AiCleanerNode(Node):
         self.fan_pub = self.create_publisher(String, '/esp32/fan_cmd', 10)
         # 청정 시작/완료 알림 → aria_mqtt_node → 웹 로그
         self.event_pub = self.create_publisher(String, '/aria/robot_event', 10)
+        # 도착 알림 → aria_mqtt_node가 '[구역]에 도착했습니다.' / '충전기 위치로 이동을 완료했습니다.'로 변환
+        self.nav_event_pub = self.create_publisher(String, '/aria/nav_event', 10)
+        # 예측에 없던 오염 감지 시 컨트롤러에 즉시 순회 요청
+        self.patrol_request_pub = self.create_publisher(Empty, '/aria/request_patrol', 10)
         self.create_subscription(String, '/esp32/air_raw', self.air_callback, 10)
 
         self._ai_active = False
@@ -237,14 +256,28 @@ class AiCleanerNode(Node):
             self._current_goal_handle.cancel_goal_async()
             self._current_goal_handle = None
 
+    def _notify(self, event_type: str, message: str):
+        """웹 실시간 로그로 보낼 이벤트 (aria_mqtt_node → event/noti)."""
+        msg = String()
+        msg.data = json.dumps({'type': event_type, 'message': message}, ensure_ascii=False)
+        self.event_pub.publish(msg)
+
     def _notify_purify(self, started: bool, zone_name):
-        """웹 화면 로그: 청정 시작/완료만 짧게 알린다."""
+        """웹 화면 로그: 청정 시작/완료 (시연 영상 문구와 동일)."""
+        if started:
+            self._notify('PURIFY_START', '공기청정을 시작합니다.')
+        else:
+            self._notify('PURIFY_DONE', '청정이 완료되었습니다.')
+
+    def _publish_arrival(self, zone_name):
+        is_home = zone_name == 'home'
         msg = String()
         msg.data = json.dumps({
-            'type': 'PURIFY_START' if started else 'PURIFY_DONE',
-            'message': f'{zone_name} 청정을 시작합니다.' if started else f'{zone_name} 청정을 완료했습니다.',
+            'event': 'NAVIGATION_SUCCEEDED',
+            'target_type': 'DOCK' if is_home else 'ZONE',
+            'zone_name': '충전기 위치' if is_home else zone_name,
         }, ensure_ascii=False)
-        self.event_pub.publish(msg)
+        self.nav_event_pub.publish(msg)
 
     def send_fan_cmd(self, fan_speed: int):
         msg = String()
@@ -277,16 +310,48 @@ class AiCleanerNode(Node):
     # ──────────────────────────────────────────────
 
     def air_callback(self, msg: String):
-        if not self._ai_active or not self.is_purifying:
+        if not self._ai_active:
+            self._bad_streak = 0
             return
         try:
-            pm25 = float(json.loads(msg.data).get('pm25', -1.0))
+            data = json.loads(msg.data)
+            pm25 = float(data.get('pm25', -1.0))
+            voc = float(data.get('voc', -1.0))
         except Exception:
             return
+
+        if not self.is_purifying:
+            self._check_unpredicted_pollution(pm25, voc)
+            return
+
         if 0 <= pm25 < self.good_threshold:
             self.get_logger().info(f"✨ 공기질 회복 (PM2.5: {pm25}). 사전 청정을 종료합니다.")
             self._stop_purifying(start_cooldown=True)
             self.return_to_home()
+
+    def _check_unpredicted_pollution(self, pm25: float, voc: float):
+        """예측 실패 대응: 대기 중인데 현재 위치 공기가 '나쁨'이면 즉시 탐색 순회를 요청한다.
+
+        로봇 센서는 자기 위치만 잴 수 있으므로, 어디가 오염원인지는 순회
+        (data_collector: 전 구역 측정 → 점수 → 우선순위 정화 → 충전기 복귀)로 찾는다.
+        """
+        if self.is_moving or pm25 < 0:   # 이동 중 값이나 센서 미준비(-1)는 판단하지 않는다
+            self._bad_streak = 0
+            return
+        score = max(pm25 / self._pm25_max, max(voc, 0.0) / self._voc_max) * 100.0
+        if score < self.detect_score:
+            self._bad_streak = 0
+            return
+        self._bad_streak += 1
+        if self._bad_streak < self.detect_count:
+            return
+        self._bad_streak = 0
+        if time.time() - self._last_detect_at < self.detect_cooldown:
+            return
+        self._last_detect_at = time.time()
+        self.get_logger().warn(f'🚨 예측에 없던 오염 감지(점수 {score:.0f}) — 탐색 순회를 요청합니다.')
+        self._notify('POLLUTION_DETECTED', '오염 구역 감지')
+        self.patrol_request_pub.publish(Empty())
 
     # ──────────────────────────────────────────────
     # 예측
@@ -420,6 +485,7 @@ class AiCleanerNode(Node):
             self.current_target_zone = None
             return
 
+        self._publish_arrival(self.current_target_zone)
         if self.current_target_zone == 'home':
             self.get_logger().info('🔌 충전 대기소 도착. 다음 예측을 대기합니다.')
         elif self._ai_active:

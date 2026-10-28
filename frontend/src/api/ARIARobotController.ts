@@ -548,6 +548,7 @@ export const navigateRobot = async (
   payload:
     | { type: 'MOVE_TO'; x: number; y: number; theta?: number }
     | { type: 'MOVE_TO'; target_type: 'ZONE'; zone_id: number; zone_name: string; x: number; y: number; theta?: number }
+    | { type: 'MOVE_TO'; target_type: 'DOCK'; zone_name: string; x: number; y: number; theta?: number }
     | { type: 'CANCEL_NAVIGATION' }
 ) => {
   const targetId = getRobotId(robotId);

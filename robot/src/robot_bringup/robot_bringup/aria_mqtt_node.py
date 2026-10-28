@@ -36,6 +36,9 @@ CTRL_TO_SHADOW_MODE = {
     "AI": "AUTO",
     "BASIC": "MANUAL",
     "MAPPING": "MAPPING",
+    # 취침 모드는 웹 어휘에 없으므로 '대기'로 보고한다. 취침 중 웹이 AUTO/MANUAL을 보내면
+    # 컨트롤러는 실행하지 않고 '기상 후 복귀 모드'로만 저장한다.
+    "SLEEP": "WAIT",
 }
 SHADOW_KEYS = ("mode", "slam", "power", "turbo")
 
@@ -260,9 +263,19 @@ class AriaMqttNode(Node):
         try:
             payload = json.loads(msg.data)
             event_type = payload.get("event", "NAVIGATION_EVENT")
-            target_name = payload.get("zone_name", "목적지")
+            target_name = payload.get("zone_name") or payload.get("target_name") or "목적지"
+            is_dock = str(payload.get("target_type", "")).upper() == "DOCK"
 
-            if event_type == "NAVIGATION_SUCCEEDED":
+            # 출발 알림은 웹 로그에 남기지 않는다(도착/실패만 사용자에게 의미 있음).
+            if event_type == "NAVIGATION_REQUESTED":
+                return
+
+            if event_type == "NAVIGATION_SUCCEEDED" and is_dock:
+                # 웹(App.tsx)은 DOCK_MOVE_DONE을 받으면 충전기 설정 단계에서
+                # '공기청정기가 이동을 완료했습니다' 확인 팝업을 연다.
+                event_type = "DOCK_MOVE_DONE"
+                message = "충전기 위치로 이동을 완료했습니다."
+            elif event_type == "NAVIGATION_SUCCEEDED":
                 message = f"{target_name}에 도착했습니다."
             elif event_type == "NAVIGATION_FAILED":
                 message = f"{target_name} 이동에 실패했습니다."

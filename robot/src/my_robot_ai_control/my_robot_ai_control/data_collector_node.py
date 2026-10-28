@@ -89,6 +89,8 @@ class DataCollectorNode(Node):
         self.fan_pub = self.create_publisher(String, '/esp32/fan_cmd', 10)
         # 청정 시작/완료 알림 → aria_mqtt_node → 웹 로그
         self.event_pub = self.create_publisher(String, '/aria/robot_event', 10)
+        # 집중정화 구역 도착 알림 → aria_mqtt_node가 '[구역]에 도착했습니다.'로 변환
+        self.nav_event_pub = self.create_publisher(String, '/aria/nav_event', 10)
         self._dwell_started = None      # 현재 구역에서 정화를 시작한 시각
         self._score_before = None       # 정화 시작 시점 점수(개선량 기록용)
         self.create_timer(1.0, self._purify_dwell_tick)
@@ -169,6 +171,7 @@ class DataCollectorNode(Node):
             self.state = 'PATROLLING'
             self.measured_scores.clear()
             self.patrol_queue = zones.copy()
+            self._notify('PATROL_START', '탐색을 시작합니다.')
             self.visit_next_zone()
 
         except Exception as e:
@@ -251,6 +254,12 @@ class DataCollectorNode(Node):
             measured_score = self._current_air_score
             self.measured_scores.append({'zone': self.current_target_zone, 'score': measured_score})
             self._write_csv_row(zone_name)
+            # 웹 로그: 구역별 점수 (지도 색상은 페이지를 다시 열어야 갱신되므로 로그로도 보여준다)
+            # 형식: '[구역이름]: 00점' (등급 표기 없음, 시연 영상과 동일)
+            if measured_score < 0:
+                self._notify('ZONE_SCORE', f'{zone_name}: 측정 지연')
+            else:
+                self._notify('ZONE_SCORE', f'{zone_name}: {int(measured_score)}점')
             # 순회로 측정한 모든 구역의 등급을 웹에 올린다.
             # (이전엔 집중정화한 '나쁨' 구역만 올려서 좋음/보통 구역은 웹에서 갱신되지 않았다.
             #  나쁨 구역은 정화가 끝난 뒤 정화 후 점수로 한 번 더 갱신된다.)
@@ -260,6 +269,7 @@ class DataCollectorNode(Node):
         elif self.state == 'PURIFYING':
             # 이전 버전은 도착 즉시 점수를 올리고 다음 구역으로 넘어갔다(정화 없음).
             # 이제는 팬을 켜고 머물며, _purify_dwell_tick이 종료 시점을 판단한다.
+            self._publish_arrival(zone_name)
             self._score_before = self._current_air_score
             self._dwell_started = time.time()
             self._send_fan(self._purify_fan_speed)
@@ -273,14 +283,33 @@ class DataCollectorNode(Node):
     # 집중정화 체류
     # ──────────────────────────────────────────────
 
-    def _notify_purify(self, started: bool, zone_name):
-        """웹 화면 로그: 청정 시작/완료만 짧게 알린다."""
+    def _notify(self, event_type: str, message: str):
+        """웹 실시간 로그로 보낼 이벤트 (aria_mqtt_node → event/noti)."""
         msg = String()
-        msg.data = json.dumps({
-            'type': 'PURIFY_START' if started else 'PURIFY_DONE',
-            'message': f'{zone_name} 청정을 시작합니다.' if started else f'{zone_name} 청정을 완료했습니다.',
-        }, ensure_ascii=False)
+        msg.data = json.dumps({'type': event_type, 'message': message}, ensure_ascii=False)
         self.event_pub.publish(msg)
+
+    def _notify_purify(self, started: bool, zone_name):
+        """웹 화면 로그: 청정 시작/완료 (시연 영상 문구와 동일)."""
+        if started:
+            self._notify('PURIFY_START', '공기청정을 시작합니다.')
+        else:
+            self._notify('PURIFY_DONE', '청정이 완료되었습니다.')
+
+    def _publish_arrival(self, zone_name):
+        msg = String()
+        msg.data = json.dumps({'event': 'NAVIGATION_SUCCEEDED', 'target_type': 'ZONE',
+                               'zone_name': zone_name}, ensure_ascii=False)
+        self.nav_event_pub.publish(msg)
+
+    def _grade(self, score: float) -> str:
+        if score < 0:
+            return '지연'
+        if score >= self._threshold_bad:
+            return '나쁨'
+        if score >= self._threshold_good:
+            return '보통'
+        return '좋음'
 
     def _send_fan(self, speed: int):
         msg = String()
@@ -352,11 +381,14 @@ class DataCollectorNode(Node):
 
         if not targets:
             self.get_logger().info('✅ 집중 정화가 요구되는 [나쁨] 단계의 구역이 없습니다. 대기합니다.')
+            self._notify('PATROL_DONE', '청정이 필요한 구역이 없습니다.')
             self.state = 'IDLE'
             self.purify_done_pub.publish(Empty())
             return
 
         targets.sort(key=lambda x: x['score'], reverse=True)
+        order = ' → '.join(str(t['zone'].get('name')) for t in targets)
+        self._notify('PURIFY_PRIORITY', f'우선순위 기반 청정: {order}')
         self.purify_queue = targets
         self.state = 'PURIFYING'
         self.visit_next_zone()
@@ -364,15 +396,7 @@ class DataCollectorNode(Node):
     def upload_air_quality_to_cloud(self, zone):
         try:
             score_int = int(self._current_air_score)
-
-            if score_int < 0:
-                grade = "지연"
-            elif score_int >= self._threshold_bad:
-                grade = "나쁨"
-            elif score_int >= self._threshold_good:
-                grade = "보통"
-            else:
-                grade = "좋음"
+            grade = self._grade(score_int)
 
             payload = {
                 "robot_id": self._robot_id,

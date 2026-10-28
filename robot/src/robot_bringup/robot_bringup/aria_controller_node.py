@@ -69,11 +69,20 @@ class AriaControllerNode(Node):
         self.declare_parameter('wake_time', '07:00')
         self.declare_parameter('sleep_enabled', True)
         self.declare_parameter('sleep_schedule_file', os.path.expanduser('~/aria_ai_system/sleep_schedule.json'))
+        # 취침 모드 진입 직전 모드(기상 시 복귀할 모드)를 저장하는 파일.
+        # 수면 중 재부팅돼도 기상 시각에 원래 모드로 돌아가기 위해 파일로 둔다.
+        self.declare_parameter('sleep_state_file', os.path.expanduser('~/aria_ai_system/sleep_state.json'))
 
         # 기본모드 점수 계산 (data_collector_node와 동일 공식/기본값)
         self.declare_parameter('threshold_good', 30.0)
         self.declare_parameter('pm25_max', 100.0)
         self.declare_parameter('voc_max', 150.0)
+        # 기본모드 정화: 도착 후 팬을 켜고 공기질이 양호해질 때까지 머문다.
+        # 최소 시간은 센서 반응 지연(PM 센서 2초 주기·실내 확산) 때문에 둔다(data_collector와 동일).
+        # 최대 시간은 센서 고장이나 오염원이 계속 있을 때 끝없이 머무는 것을 막는다.
+        self.declare_parameter('basic_fan_speed', 255)
+        self.declare_parameter('basic_purify_min_sec', 60.0)
+        self.declare_parameter('basic_purify_max_sec', 1800.0)
 
         self.declare_parameter('map_save_dir', os.environ.get('ARIA_MAPS_DIR', '/srv/aria/users/hs/ros2_last/maps'))
         self.declare_parameter(
@@ -90,6 +99,7 @@ class AriaControllerNode(Node):
         self.purify_interval = float(self.get_parameter('purify_interval').value)
         self.purify_cycle_timeout = float(self.get_parameter('purify_cycle_timeout').value)
         self.sleep_schedule_file = self.get_parameter('sleep_schedule_file').value
+        self.sleep_state_file = self.get_parameter('sleep_state_file').value
         self._sleep_time = self._parse_hhmm(self.get_parameter('sleep_time').value, dt_time(23, 0))
         self._wake_time = self._parse_hhmm(self.get_parameter('wake_time').value, dt_time(7, 0))
         self._sleep_enabled = bool(self.get_parameter('sleep_enabled').value)
@@ -97,6 +107,9 @@ class AriaControllerNode(Node):
         self.threshold_good = float(self.get_parameter('threshold_good').value)
         self._pm25_max = float(self.get_parameter('pm25_max').value)
         self._voc_max = float(self.get_parameter('voc_max').value)
+        self.basic_fan_speed = int(self.get_parameter('basic_fan_speed').value)
+        self.basic_purify_min_sec = float(self.get_parameter('basic_purify_min_sec').value)
+        self.basic_purify_max_sec = float(self.get_parameter('basic_purify_max_sec').value)
         self.map_save_dir = self.get_parameter('map_save_dir').value
         self.upload_map_script_path = self.get_parameter('upload_map_script_path').value
         self.mapping_timeout_sec = float(self.get_parameter('mapping_timeout_sec').value)
@@ -111,7 +124,13 @@ class AriaControllerNode(Node):
         self._ai_purify_timer_start = None
         self._purify_retrigger_in_progress = False
         self._current_air_score = -1.0
-        self._sleeping = False          # 수면 시간이라 AI를 멈춘 상태인가
+        # 기본모드 정화 세션 번호. 새 이동 명령·취소·대기 전환 때마다 올려서,
+        # 이전 정화 루프가 스스로 끝나고 새 루프가 켠 팬을 끄지 않게 한다.
+        self._basic_session = 0
+        self._basic_lock = threading.Lock()
+        self._resume_mode = 'STANDBY'   # 취침 모드에서 기상할 때 돌아갈 모드
+        self._boot_resume_mode = None   # 수면 중 재부팅 시 파일에서 복원한 복귀 모드
+        self._sleeping = False         # 수면 시간이라 AI를 멈춘 상태인가
         self._ai_active_state = False   # 마지막으로 발행한 /aria/ai_active 값
         self._tier2_proc = None
         self._tier2_profile = None
@@ -127,6 +146,8 @@ class AriaControllerNode(Node):
         self.create_subscription(String, '/aria/mode_command', self._on_mode_command, 10)
         self.create_subscription(String, '/aria/manual_move_command', self._on_manual_move_command, 10)
         self.create_subscription(Empty, '/aria/purify_cycle_done', self._on_purify_cycle_done, 10)
+        # ai_cleaner가 예측에 없던 오염을 감지하면 즉시 순회를 요청한다.
+        self.create_subscription(Empty, '/aria/request_patrol', self._on_patrol_request, 10)
         self.create_subscription(String, '/aria/sleep_schedule', self._on_sleep_schedule, 10)
 
         # explore_lite가 이미 발행하는 탐사 상태 토픽 (explore_lite_msgs/ExploreStatus).
@@ -156,6 +177,8 @@ class AriaControllerNode(Node):
         # AI모드 4시간 재실행 감시 (1초 주기)
         self.create_timer(1.0, self._ai_mode_tick)
 
+        self._load_sleep_state_file()  # 수면 중 재부팅 대비: 저장된 복귀 모드 읽기
+
         # 기본값: 위치추정(AMCL) 스택을 항상 띄워둔다
         self._swap_tier2('LOCALIZE')
         self._publish_mode_state()
@@ -173,6 +196,17 @@ class AriaControllerNode(Node):
             payload = {'mode': msg.data.strip()}
 
         mode = str(payload.get('mode', '')).strip().upper()
+
+        if self.mode == 'SLEEP':
+            # 취침 중에는 바로 실행하지 않고 '기상 후 돌아갈 모드'만 바꾼다.
+            target = self._normalize_mode(mode)
+            if target in ('STANDBY', 'AI', 'BASIC'):
+                self._resume_mode = target
+                self._save_sleep_state()
+                self.get_logger().info(f'취침 중 모드 요청: 기상 후 {target} 모드로 돌아갑니다.')
+            else:
+                self.get_logger().warn(f'취침 중에는 {mode!r} 요청을 실행할 수 없습니다.')
+            return
 
         if self.mode == 'MAPPING' and mode != 'MAPPING':
             self.get_logger().warn('매핑 진행 중에는 모드 전환 요청을 무시합니다.')
@@ -202,10 +236,12 @@ class AriaControllerNode(Node):
     def _enter_standby(self):
         self.mode = 'STANDBY'
         self._publish_mode_state()
+        self._next_basic_session()  # 진행 중인 기본모드 정화 루프 종료
         self._cancel_own_nav_goal()
         self.purify_abort_pub.publish(Empty())
         self._set_ai_active(False)
         self._publish_motor_stop()
+        self._publish_fan(0)  # 기본모드 정화 중 '청정 중지'를 눌러도 팬이 바로 꺼지도록
 
     # ══════════════════════════════════════════════════
     # AI모드
@@ -227,11 +263,53 @@ class AriaControllerNode(Node):
             self.get_logger().info('수면 시간이므로 기상 시각까지 대기합니다.')
             self._purify_retrigger_in_progress = False
             return
-        self._run_purify_cycle_and_wait()
+        finished = self._run_purify_cycle_and_wait()
         if self.mode != 'AI':
             return  # 대기중 다른 모드로 전환됨
+        if finished and not self._sleeping:
+            self._return_to_dock()
+            if self.mode != 'AI':
+                return
         self._ai_purify_timer_start = time.time()
         self._set_ai_active(True)
+
+    def _return_to_dock(self) -> bool:
+        """순회·집중정화가 끝난 뒤 충전기(도킹) 위치로 복귀한다.
+
+        이전엔 순회가 끝나면 마지막 정화 구역에 그대로 멈춰 있었다
+        (ai_cleaner는 자기 위치를 'home'으로 알고 있어 복귀시키지도 않았다).
+        도착하면 aria_mqtt_node가 target_type=DOCK을 보고
+        '충전기 위치로 이동을 완료했습니다.'를 웹 로그로 보낸다.
+        """
+        dock = self._get_dock_pose()
+        if dock is None:
+            self.get_logger().warn('저장된 충전기 위치가 없어 복귀를 건너뜁니다.')
+            return False
+        self.get_logger().info('🏠 순회 종료 — 충전기 위치로 복귀합니다.')
+        return self._navigate_to(
+            dock['x'], dock['y'], dock.get('theta', 0.0),
+            timeout=self.nav_timeout_sec,
+            metadata={'target_type': 'DOCK', 'zone_name': '충전기 위치'},
+        )
+
+    def _on_patrol_request(self, msg: Empty):
+        """ai_cleaner가 '예측에 없던 오염'을 감지했을 때 보내는 순회 요청.
+
+        4시간 주기 순회와 같은 경로(_rerun_purify_cycle)를 즉시 실행한다:
+        탐색(전 구역 측정) → 구역별 점수 → 나쁨 구역 우선순위 정화 → 충전기 복귀.
+        """
+        if self.mode != 'AI' or self._sleeping:
+            return
+        if self._ai_purify_timer_start is None or self._purify_retrigger_in_progress:
+            self.get_logger().info('이미 순회가 진행 중이라 오염 감지 순회 요청을 무시합니다.')
+            return
+        self.get_logger().info('🚨 오염 감지 — 즉시 탐색 순회를 시작합니다.')
+        self._start_rerun_purify_cycle()
+
+    def _start_rerun_purify_cycle(self):
+        self._purify_retrigger_in_progress = True
+        self._set_ai_active(False)
+        threading.Thread(target=self._rerun_purify_cycle, daemon=True).start()
 
     def _run_purify_cycle_and_wait(self):
         self._purify_done_event.clear()
@@ -254,15 +332,17 @@ class AriaControllerNode(Node):
         elapsed = time.time() - self._ai_purify_timer_start
         if elapsed < self.purify_interval:
             return
-        self._purify_retrigger_in_progress = True
-        self._set_ai_active(False)
-        threading.Thread(target=self._rerun_purify_cycle, daemon=True).start()
+        self._start_rerun_purify_cycle()
 
     def _rerun_purify_cycle(self):
         try:
-            self._run_purify_cycle_and_wait()
+            finished = self._run_purify_cycle_and_wait()
             if self.mode != 'AI' or self._sleeping:
                 return
+            if finished:
+                self._return_to_dock()
+                if self.mode != 'AI' or self._sleeping:
+                    return
             self._ai_purify_timer_start = time.time()
             self._set_ai_active(True)
         finally:
@@ -272,14 +352,17 @@ class AriaControllerNode(Node):
         self._purify_done_event.set()
 
     # ══════════════════════════════════════════════════
-    # 수면(절전) 시간
+    # 수면(절전) 시간 — 취침 모드
     # ══════════════════════════════════════════════════
     #
-    # 이전 버전: 23~07시 하드코딩, 그것도 '재순회만 미룸' — ai_active는 켜진 채라
-    #           ai_cleaner가 밤새 10초마다 예측·이동했다.
-    # 현재: 사용자가 웹앱에서 저장한 수면시간을 MQTT로 받아 파일에 보관하고,
-    #       수면 구간에 들어서면 순회 중단 + 예측청정 정지(ai_active=False) + 팬 정지,
-    #       기상 시각이 되면 AI모드였던 경우 예측청정만 다시 켠다(즉시 재순회 없음).
+    # 수면 시각이 되면 현재 모드(STANDBY/AI/BASIC)를 '복귀 모드'로 파일에 저장하고
+    # 모든 동작(이동·순회·예측·팬·모터)을 멈춘 SLEEP 모드로 들어간다.
+    # 기상 시각이 되면 저장된 모드로 되돌아간다.
+    #   - AI    : 예측 청정만 즉시 재개, 다음 순회는 그때부터 4시간 뒤(기상 직후 순회 없음)
+    #   - BASIC : 기본모드 대기 상태(진행 중이던 정화 작업은 다시 시작하지 않음)
+    #   - STANDBY: 대기
+    # 매핑 중에 수면 시각이 되면 매핑이 끝난 뒤에 취침 모드로 들어간다.
+    # 취침 중 웹에서 온 모드 명령은 바로 실행하지 않고 '복귀 모드'만 바꾼다.
 
     @staticmethod
     def _parse_hhmm(value, default: dt_time) -> dt_time:
@@ -336,24 +419,111 @@ class AriaControllerNode(Node):
         night = self._is_night_time()
         if night == self._sleeping:
             return
-        self._sleeping = night
-        self.sleep_state_pub.publish(Bool(data=night))
-
         if night:
-            self.get_logger().info('🌙 수면 시간 진입: 순회·예측청정·팬을 정지합니다.')
-            if self.mode == 'AI':
-                self.purify_abort_pub.publish(Empty())
-                self._purify_done_event.set()  # 대기 중인 순회 스레드를 풀어준다
-                self._set_ai_active(False, force=True)
-                self._publish_fan(0)
+            if self.mode == 'MAPPING':
+                return  # 매핑이 끝나 대기모드가 되면 다음 틱에 취침 모드로 들어간다
+            resume = self._boot_resume_mode or self.mode
+            self._boot_resume_mode = None
+            self._enter_sleep(resume)
         else:
-            self.get_logger().info('☀️ 기상 시각: AI모드라면 예측청정을 다시 켭니다.')
-            if self.mode == 'AI':
-                # 기상 직후 순회는 하지 않는다. 예측청정만 재개하고,
-                # 다음 순회는 지금부터 purify_interval(4시간) 뒤에 돈다.
-                self._ai_purify_timer_start = time.time()
-                self._purify_retrigger_in_progress = False
-                self._set_ai_active(True)
+            self._exit_sleep()
+
+    @staticmethod
+    def _normalize_mode(mode: str) -> str:
+        mode = str(mode).strip().upper()
+        if mode in ('STANDBY', '대기', '대기모드', 'WAIT'):
+            return 'STANDBY'
+        if mode in ('AI', 'AI_MODE', 'AI모드', 'AUTO'):
+            return 'AI'
+        if mode in ('BASIC', '기본모드', 'MANUAL'):
+            return 'BASIC'
+        if mode in ('MAPPING', '매핑', 'SLAM'):
+            return 'MAPPING'
+        return mode
+
+    def _enter_sleep(self, resume_mode: str):
+        if resume_mode not in ('STANDBY', 'AI', 'BASIC'):
+            resume_mode = 'STANDBY'
+        self._sleeping = True
+        self._resume_mode = resume_mode
+        self._save_sleep_state()
+        self.get_logger().info(f'🌙 취침 모드 시작 (기상 후 {resume_mode} 모드로 복귀)')
+
+        # 진행 중인 모든 동작 정지 (STANDBY 진입과 같은 정리 + 대기 중인 순회 스레드 해제)
+        self.mode = 'SLEEP'
+        self._next_basic_session()
+        self._cancel_own_nav_goal()
+        self.purify_abort_pub.publish(Empty())
+        self._purify_done_event.set()
+        self._set_ai_active(False, force=True)
+        self._publish_motor_stop()
+        self._publish_fan(0)
+
+        self.sleep_state_pub.publish(Bool(data=True))
+        self._publish_mode_state()
+        self._publish_robot_event('SLEEP_START', '취침 모드 시작')
+
+    def _exit_sleep(self):
+        resume_mode = self._resume_mode
+        self._sleeping = False
+        self._clear_sleep_state()
+        self.sleep_state_pub.publish(Bool(data=False))
+        self.get_logger().info(f'☀️ 기상 시각: 취침 전 모드({resume_mode})로 돌아갑니다.')
+
+        if resume_mode == 'AI':
+            self.mode = 'AI'
+            self._purify_retrigger_in_progress = False
+            self._ai_purify_timer_start = time.time()
+            self._publish_mode_state()
+            self._set_ai_active(True)
+        elif resume_mode == 'BASIC':
+            self.mode = 'BASIC'
+            self._publish_mode_state()
+        else:
+            self.mode = 'STANDBY'
+            self._publish_mode_state()
+
+    def _save_sleep_state(self):
+        try:
+            os.makedirs(os.path.dirname(self.sleep_state_file), exist_ok=True)
+            tmp = self.sleep_state_file + '.tmp'
+            with open(tmp, 'w') as f:
+                json.dump({
+                    'sleeping': True,
+                    'resume_mode': self._resume_mode,
+                    'saved_at': datetime.now().isoformat(timespec='seconds'),
+                }, f)
+            os.replace(tmp, self.sleep_state_file)
+        except Exception as e:
+            self.get_logger().warn(f'취침 상태 저장 실패: {e}')
+
+    def _clear_sleep_state(self):
+        try:
+            os.remove(self.sleep_state_file)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            self.get_logger().warn(f'취침 상태 파일 삭제 실패: {e}')
+
+    def _load_sleep_state_file(self):
+        """부팅 시 호출. 수면 중 재부팅이면 저장된 복귀 모드를 이어받는다.
+
+        이미 기상 시각이 지났으면 파일만 지우고 대기모드로 시작한다
+        (부팅 직후 로봇이 저절로 AI 모드에 들어가지 않게 하는 기존 원칙 유지).
+        """
+        try:
+            with open(self.sleep_state_file) as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            return
+        except Exception as e:
+            self.get_logger().warn(f'취침 상태 파일 읽기 실패: {e}')
+            return
+        if data.get('sleeping') and self._is_night_time():
+            self._boot_resume_mode = self._normalize_mode(data.get('resume_mode', 'STANDBY'))
+            self.get_logger().info(f'수면 중 재부팅 — 기상 후 {self._boot_resume_mode} 모드로 복귀합니다.')
+        else:
+            self._clear_sleep_state()
 
     # ══════════════════════════════════════════════════
     # 매핑
@@ -456,30 +626,84 @@ class AriaControllerNode(Node):
     def _basic_mode_worker(self, payload: dict):
         target = self._resolve_basic_target(payload)
         if target is None or target.get('x') is None or target.get('y') is None:
-            # 기본모드는 수동모드 — 좌표 없이 들어오면 에러 없이 그 자리에서
-            # 대기하며 수동 이동(/aria/manual_move_command)만 받는다.
-            self.get_logger().info('기본모드(수동) 대기 중 — 좌표 지정 후 청정 시작 명령을 기다립니다.')
+            # 웹앱은 기본모드 전환(MODE=MANUAL)과 구역 이동(cmd/nav MOVE_TO)을 따로 보낸다.
+            # 좌표 없는 모드 명령은 '기본모드로 바꿔라'만 뜻하고, 실제 이동·정화는
+            # 뒤이어 오는(또는 먼저 온) MOVE_TO를 _manual_move_worker가 맡는다.
+            self.get_logger().info('기본모드 진입 — 구역 이동 명령이 오면 이동 후 정화합니다.')
             return
 
+        session = self._next_basic_session()
+        name = target.get('name', '기본모드 목표')
         arrived = self._navigate_to(
             target['x'], target['y'], target.get('theta', 0.0),
             timeout=self.nav_timeout_sec,
-            metadata={'target_type': 'BASIC', 'zone_name': target.get('name', '기본모드 목표')},
+            metadata={'target_type': 'BASIC', 'zone_name': name},
         )
-        if not arrived or self.mode != 'BASIC':
-            if self.mode == 'BASIC':
-                self.get_logger().warn('기본모드 목표 이동 실패. 대기모드로 복귀합니다.')
-                self._enter_standby()
+        if not self._basic_session_alive(session):
+            return  # 이동 중에 다른 명령이 들어옴
+        if not arrived:
+            self.get_logger().warn('기본모드 목표 이동 실패. 대기모드로 복귀합니다.')
+            self._enter_standby()
             return
 
-        self._current_air_score = -1.0
-        while self.mode == 'BASIC':
-            if 0.0 <= self._current_air_score <= self.threshold_good:
-                break
-            time.sleep(5.0)
+        self._basic_purify_here(session, name)
 
+    # ── 기본모드 정화 (도착 후 팬 가동 → 공기질 양호까지 체류) ──
+
+    def _next_basic_session(self) -> int:
+        with self._basic_lock:
+            self._basic_session += 1
+            return self._basic_session
+
+    def _basic_session_alive(self, session: int) -> bool:
+        return self.mode == 'BASIC' and session == self._basic_session
+
+    def _basic_purify_here(self, session: int, zone_name: str):
+        """기본모드 목표에 도착한 뒤 호출. 팬을 켜고 공기질이 양호해질 때까지 머문다.
+
+        종료 조건
+          - 최소 시간(basic_purify_min_sec)이 지났고 종합 점수가 threshold_good 이하
+          - 최대 시간(basic_purify_max_sec) 도달
+        중단 조건(팬만 끄고 조용히 끝냄)
+          - 모드가 BASIC이 아니게 됨(대기·AI·매핑 전환)
+          - 새 이동 명령·이동 취소로 세션이 바뀜(새 세션이 팬을 소유)
+        """
+        self._current_air_score = -1.0  # 도착 전(이동 중) 값으로 판단하지 않도록
+        started = time.time()
+        self._publish_fan(self.basic_fan_speed)
+        self._publish_robot_event('PURIFY_START', '공기청정을 시작합니다.')
+        self.get_logger().info(
+            f"🌀 기본모드 '{zone_name}' 정화 시작 (최소 {self.basic_purify_min_sec:.0f}s / "
+            f"최대 {self.basic_purify_max_sec:.0f}s)"
+        )
+
+        reason = None
+        try:
+            while self._basic_session_alive(session):
+                elapsed = time.time() - started
+                score = self._current_air_score
+                if elapsed >= self.basic_purify_min_sec and 0.0 <= score <= self.threshold_good:
+                    reason = '공기질 양호'
+                    break
+                if elapsed >= self.basic_purify_max_sec:
+                    reason = '최대 시간 도달'
+                    break
+                time.sleep(1.0)
+        finally:
+            # 세션이 바뀌었으면 새 세션이 팬을 쓰고 있으므로 건드리지 않는다.
+            if session == self._basic_session:
+                self._publish_fan(0)
+
+        if reason is None:
+            self.get_logger().info(f"기본모드 '{zone_name}' 정화 중단(다른 명령).")
+            return
+
+        self.get_logger().info(f"✨ 기본모드 '{zone_name}' 정화 완료({reason}). 대기모드로 복귀합니다.")
+        # 기본모드는 사용자가 '청정 시작'을 누른 한 번의 작업이므로, 끝나면 웹의 실행 상태도
+        # 풀어야 한다. 웹은 PURIFYING_DONE을 받으면 실행 중 표시를 끄고 완료 팝업을 띄운다.
+        # (AI모드의 반복 정화는 PURIFY_DONE을 써서 이 동작을 일으키지 않는다.)
+        self._publish_robot_event('PURIFYING_DONE', '청정이 완료되었습니다.')
         if self.mode == 'BASIC':
-            self.get_logger().info('기본모드 정화 완료(공기질 양호). 대기모드로 복귀합니다.')
             self._enter_standby()
 
     def _resolve_basic_target(self, payload: dict):
@@ -544,9 +768,13 @@ class AriaControllerNode(Node):
         if self.mode == 'MAPPING':
             self.get_logger().warn('매핑 중에는 수동 이동 명령을 무시합니다.')
             return
+        if self.mode == 'SLEEP':
+            self.get_logger().warn('취침 모드 중에는 이동 명령을 무시합니다.')
+            return
 
         cmd_type = str(payload.get('type', 'MOVE_TO')).upper()
         if cmd_type in ('CANCEL', 'STOP'):
+            self._next_basic_session()  # 기본모드 정화 중이면 루프 종료 + 팬 끄기
             self._cancel_own_nav_goal()
             return
 
@@ -565,14 +793,33 @@ class AriaControllerNode(Node):
         metadata = {k: payload[k] for k in ('target_type', 'zone_id', 'zone_name', 'target_name') if k in payload}
         metadata.update({'x': float(x), 'y': float(y), 'theta': theta})
 
+        # 새 이동이 시작되면 이전 기본모드 정화는 끝낸다(새 목적지에서 다시 시작).
+        session = self._next_basic_session()
         threading.Thread(
-            target=self._manual_move_worker, args=(float(x), float(y), theta, metadata), daemon=True
+            target=self._manual_move_worker, args=(float(x), float(y), theta, metadata, session), daemon=True
         ).start()
 
-    def _manual_move_worker(self, x: float, y: float, theta: float, metadata: dict):
+    def _manual_move_worker(self, x: float, y: float, theta: float, metadata: dict, session: int):
         arrived = self._navigate_to(x, y, theta, timeout=self.nav_timeout_sec, metadata=metadata)
-        if arrived and str(metadata.get('target_type', '')).upper() == 'DOCK_SETUP':
+        target_type = str(metadata.get('target_type', '')).upper()
+        if arrived and target_type == 'DOCK_SETUP':
             self._call_trigger_service_sync(self.save_dock_client)
+            return
+        if target_type == 'DOCK':
+            return  # 충전기 위치로 이동은 정화하지 않는다
+
+        # 웹앱 기본모드: MODE=MANUAL(→BASIC)과 MOVE_TO가 따로 오므로, 도착 시점에
+        # 기본모드이면 그 자리에서 정화를 시작한다. 모드 명령이 이동 명령보다 늦게 와도
+        # 이동하는 동안 이미 도착해 있으므로 순서와 상관없이 동작한다.
+        # 대기모드에서의 이동(충전기 위치로 이동 등)은 정화하지 않는다.
+        if not self._basic_session_alive(session):
+            return
+        if not arrived:
+            self.get_logger().warn('기본모드 목표 이동 실패. 대기모드로 복귀합니다.')
+            self._enter_standby()
+            return
+        zone_name = metadata.get('zone_name') or metadata.get('target_name') or '지정 위치'
+        self._basic_purify_here(session, zone_name)
 
     # ══════════════════════════════════════════════════
     # Nav2 헬퍼 (수동이동/기본모드/매핑귀환 공용)

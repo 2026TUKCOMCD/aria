@@ -76,7 +76,7 @@
 
 | <img width="80" height="100" src="https://github.com/user-attachments/assets/ab73bb1c-c1d4-464d-8ad3-635b45d5a8ae" > | <img width="80" height="100" src="https://github.com/user-attachments/assets/c7f66b7c-ab84-41fa-8fba-b49dba28b677" > | <img width="80" height="100" src="https://github.com/user-attachments/assets/c33252c7-3bf6-43cf-beaa-a9e2d9bd090b" > | <img width="80" height="100" src="https://github.com/user-attachments/assets/0d5909f0-fc73-4ab9-be09-4d48e3e71083" > | <img width="80" height="100" src="https://github.com/user-attachments/assets/c7f66b7c-ab84-41fa-8fba-b49dba28b677" > |
 |:---:|:---:|:---:|:---:|:---:|
-| **멘티1 (팀장)** | **멘티2** | **멘티3** | **멘티4** | **멘토** |
+| **멘티1** | **멘티2 (팀장)** | **멘티3** | **멘티4** | **멘토** |
 | • 팀 통합 관리 <br> • AWS IoT·클라우드 백엔드·API·DB 및 MQTT 연동 | • ESP32 센서·팬 제어 <br> • 구역 분할 알고리즘 및 로봇 통합 시험 | • ROS2·Raspberry Pi 환경, 펌웨어 통합 <br> • AI 데이터 수집·자동 학습 파이프라인 | • React 웹 애플리케이션 <br> • 지도·로봇 위치 시각화, API 연동 및 UI 통합 테스트 | • 프로젝트 멘토 <br> • 기술 자문 |
 
 ---

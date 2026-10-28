@@ -307,8 +307,12 @@ const MapPage = () => {
         chargerPosition,
       });
       setSetupStep('DOCK_MOVE_REQUIRED');
+      // target_type: 'DOCK' → 로봇이 도착 시 DOCK_MOVE_DONE 이벤트를 보내고,
+      // App.tsx가 이를 받아 '이동을 완료했습니다' 확인 팝업(DOCK_CONFIRM_REQUIRED)을 연다.
       await navigateRobot(robotId, {
         type: 'MOVE_TO',
+        target_type: 'DOCK',
+        zone_name: '충전기 위치',
         x: chargerPosition.x,
         y: chargerPosition.y,
         theta: 0,
