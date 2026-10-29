@@ -1,16 +1,5 @@
 # ARIA: AI 기반 자율주행 로봇 공기청정기
 
-![ROS2](https://img.shields.io/badge/ROS2-Humble-22314E?style=flat-square&logo=ros)
-![Python](https://img.shields.io/badge/Python-3.10-3776AB?style=flat-square&logo=python)
-![C++](https://img.shields.io/badge/C++-17-00599C?style=flat-square&logo=c%2B%2B)
-![PlatformIO](https://img.shields.io/badge/PlatformIO-ESP32--S3-F58220?style=flat-square&logo=platformio)
-![React](https://img.shields.io/badge/React-TypeScript-61DAFB?style=flat-square&logo=react)
-![AWS](https://img.shields.io/badge/AWS-IoT%20Core-232F3E?style=flat-square&logo=amazonaws)
-
-> 실내를 스스로 돌아다니며 구역별 공기질을 측정하고, 시간대별 오염 패턴을 학습해 **오염이 생기기 전에 먼저 이동해 정화하는** 가정용 이동형 공기청정 로봇
-
----
-
 ## 💡1. 프로젝트 개요
 
 ### 1-1. 프로젝트 소개
